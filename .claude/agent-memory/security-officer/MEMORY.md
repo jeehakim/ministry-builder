@@ -1,0 +1,2 @@
+- [Hosting trust model](project_hosting_trust_model.md) — shared sites.shofar.io origin, same-site with SPA; email/custom-domain features latent at 2026-11-02
+- [Raw strings into templates](pattern_raw_strings_into_templates.md) — theme z.string() fields interpolated into <style> = stored XSS; check every raw interpolation

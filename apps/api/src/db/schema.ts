@@ -177,6 +177,26 @@ export const domains = sqliteTable(
   (t) => [uniqueIndex("domains_hostname_unique").on(t.hostname), index("domains_site_id_idx").on(t.siteId)],
 );
 
+/**
+ * One row per publish attempt that passed validation. The per-site hourly publish limit counts these
+ * rows (site_versions cannot: publishing does not create a version). Rows older than a day are pruned
+ * on the next publish of the same site.
+ */
+export const publishEvents = sqliteTable(
+  "publish_events",
+  {
+    id: text("id").primaryKey(),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("publish_events_site_id_created_at_idx").on(t.siteId, t.createdAt)],
+);
+
 export type User = typeof users.$inferSelect;
 export type Site = typeof sites.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;

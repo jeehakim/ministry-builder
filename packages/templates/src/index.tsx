@@ -85,14 +85,16 @@ export function renderSite(input: SiteDocument, options: RenderOptions): Rendere
   const template = getTemplate(doc.theme.templateId);
   const body = renderToStaticMarkup(<template.Body doc={doc} options={{ ...options, language: doc.meta.language }} />);
   const title = doc.meta.tagline ? `${doc.meta.orgName} — ${doc.meta.tagline}` : doc.meta.orgName;
+  const description = doc.meta.description || doc.meta.tagline;
   const html = `<!doctype html>
 <html lang="${escapeHtml(doc.meta.language)}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
-<meta name="description" content="${escapeHtml(doc.meta.description || doc.meta.tagline)}">
-${(options.languageLinks ?? []).map((l) => `<link rel="alternate" hreflang="${escapeHtml(l.code)}" href="${escapeHtml(l.href)}">`).join("\n")}
+<meta name="description" content="${escapeHtml(description)}">
+<meta name="theme-color" content="${escapeHtml(doc.theme.primary)}">
+${seoHead(doc, options, title, description)}
 <style>${template.css(doc.theme)}</style>
 </head>
 <body>
@@ -101,6 +103,57 @@ ${body}
 </html>
 `;
   return { html, images: collectImages(doc) };
+}
+
+/** Resolves a possibly relative href against the page's canonical URL; returns the input when no base is known. */
+function absolute(href: string, base: string | undefined): string {
+  if (!base) return href;
+  try {
+    return new URL(href, base).toString();
+  } catch {
+    return href;
+  }
+}
+
+/** Canonical, alternates, Open Graph, Twitter card and Organization JSON-LD. Alternates stay relative without a canonical URL. */
+function seoHead(doc: SiteDocument, options: RenderOptions, title: string, description: string): string {
+  const base = options.canonicalUrl;
+  const links = options.languageLinks ?? [];
+  const lines: string[] = [];
+  for (const l of links) lines.push(`<link rel="alternate" hreflang="${escapeHtml(l.code)}" href="${escapeHtml(absolute(l.href, base))}">`);
+  if (links.length > 1) {
+    const primary = links[0];
+    if (primary) lines.push(`<link rel="alternate" hreflang="x-default" href="${escapeHtml(absolute(primary.href, base))}">`);
+  }
+  if (base) {
+    lines.push(`<link rel="canonical" href="${escapeHtml(base)}">`);
+    const hero = doc.sections.find((s) => s.type === "hero" && !s.hidden);
+    const image = (hero && hero.type === "hero" && hero.image) || doc.meta.logo;
+    const imageUrl = image ? absolute(options.imageUrl(image), base) : undefined;
+    lines.push(
+      `<meta property="og:type" content="website">`,
+      `<meta property="og:site_name" content="${escapeHtml(doc.meta.orgName)}">`,
+      `<meta property="og:title" content="${escapeHtml(title)}">`,
+      `<meta property="og:description" content="${escapeHtml(description)}">`,
+      `<meta property="og:url" content="${escapeHtml(base)}">`,
+      `<meta property="og:locale" content="${escapeHtml(doc.meta.language)}">`,
+      `<meta name="twitter:card" content="${imageUrl ? "summary_large_image" : "summary"}">`,
+    );
+    if (imageUrl) lines.push(`<meta property="og:image" content="${escapeHtml(imageUrl)}">`);
+    const contact = doc.sections.find((s) => s.type === "contact" && !s.hidden);
+    const org: Record<string, unknown> = {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: doc.meta.orgName,
+      url: base,
+      ...(description ? { description } : {}),
+      ...(doc.meta.logo ? { logo: absolute(options.imageUrl(doc.meta.logo), base) } : {}),
+      ...(contact && contact.type === "contact" && contact.social.length ? { sameAs: contact.social.map((l) => l.href).filter((h) => /^https?:/i.test(h)) } : {}),
+    };
+    // JSON inside <script> must not be able to close the tag.
+    lines.push(`<script type="application/ld+json">${JSON.stringify(org).replace(/</g, "\\u003c")}</script>`);
+  }
+  return lines.join("\n");
 }
 
 /** A minimal "thank you" page shown after the contact form is submitted, in the site's theme and language. */

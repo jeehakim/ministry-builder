@@ -38,11 +38,11 @@ Set `vars.ALLOWED_ORIGIN` to `https://build.shofar.io` for production and uncomm
 |---|---|---|
 | `GET /health` | no | `{ ok: true }` |
 | `GET /sites` | yes | Sites in orgs the caller owns |
-| `POST /sites` | yes | `{ orgName, slug? }`; creates org if needed, site, first version. 409 if the slug is taken |
+| `POST /sites` | yes | `{ orgName, slug? }`; creates org if needed, site, first version. 409 if the slug is taken, 429 at the per-user site limit (admins exempt) |
 | `GET /sites/:id` | owner or admin | `{ site, document }`; `site.messageCount` is the number of stored contact-form messages |
-| `PUT /sites/:id/document` | owner or admin | Body is a `SiteDocument`; returns `{ versionId }` |
+| `PUT /sites/:id/document` | owner or admin | Body is a `SiteDocument`; returns `{ versionId }`. Prunes the oldest versions beyond `MAX_VERSIONS_PER_SITE` |
 | `GET /sites/:id/versions` | owner or admin | `{ versions: [{ id, createdAt }], currentVersionId }` |
-| `POST /sites/:id/assets` | owner or admin | multipart `file` (JPEG, PNG, WebP, max 5 MB), optional `alt`, `width`, `height`; returns `{ id, key, url }` |
+| `POST /sites/:id/assets` | owner or admin | multipart `file` (JPEG, PNG, WebP, max 5 MB), optional `alt`, `width`, `height`; returns `{ id, key, url }`. 413 when the site would exceed `MAX_SITE_STORAGE_BYTES` |
 | `DELETE /sites/:id/assets/:assetId` | owner or admin | Removes the R2 object and the row |
 | `GET /assets/*` | no | Streams from R2, cached for a year |
 | `GET /ai/usage` | yes | `{ used, limit, resetsAt, available }`; the limit is per user per UTC day (`AI_DAILY_LIMIT`) |
@@ -51,7 +51,7 @@ Set `vars.ALLOWED_ORIGIN` to `https://build.shofar.io` for production and uncomm
 | `POST /sites/:id/ai/theme` | owner or admin | `AiThemeRequest` -> `{ theme, rationale }` |
 | `POST /sites/:id/ai/alt-text` | owner or admin | `{ assetKey }` (must be under `sites/<id>/`) -> `{ alt }` |
 | `POST /sites/:id/ai/translate` | owner or admin | `AiTranslateRequest` -> `{ language, overlay }`; 400 for the primary language; saves the overlay into `translations[language]`, adds the language to `meta.languages` and moves the current version |
-| `POST /sites/:id/publish` | owner or admin | Renders the current version into the `PUBLISHED` bucket; returns `{ url, publishedAt }` |
+| `POST /sites/:id/publish` | owner or admin | Renders the current version into the `PUBLISHED` bucket (pages, thank-you pages, `robots.txt`, `sitemap.xml`); returns `{ url, publishedAt }`. 429 with `Retry-After` past `MAX_PUBLISHES_PER_HOUR` |
 | `POST /sites/:id/unpublish` | owner or admin | Removes the published objects; site returns to `draft` |
 | `GET /sites/:id/domains` | owner or admin | `{ domains, cnameTarget, enabled }`; each domain has `hostname`, `kind`, `sslStatus`, `verifiedAt`, `active` and the `dns` record to create |
 | `POST /sites/:id/domains` | owner or admin | `{ hostname, kind?: "primary" \| "redirect" }`; creates a Cloudflare for SaaS custom hostname and returns `{ domain }` (201). 400 bad hostname, 409 taken or second primary, 502 Cloudflare error, 503 not configured |
@@ -91,6 +91,45 @@ Messages are personal data; deleting one is `DELETE /sites/:id/messages/:msgId`.
 A provider that is selected but missing its binding or key falls back to store-only. Providers live in `src/email/` behind the `EmailSender` interface.
 
 Errors are `{ "error": string }`. A site you may not access answers 404, same as a missing one.
+
+## Limits and safety
+
+### Limits (vars in `wrangler.jsonc`)
+
+Values are strings. A missing, zero, negative or non-numeric value falls back to the default.
+
+| Var | Default | Enforced in | When exceeded |
+|---|---|---|---|
+| `MAX_SITES_PER_USER` | `10` | `POST /sites` | 429. Counts every site in organizations the user owns; admins are exempt |
+| `MAX_SITE_STORAGE_BYTES` | `104857600` (100 MB) | `POST /sites/:id/assets` | 413. Sum of `assets.bytes` for the site plus the new file; the file is not stored |
+| `MAX_VERSIONS_PER_SITE` | `500` | `PUT /sites/:id/document` | No error: after the save, the oldest versions are deleted until the site is back at the limit. The current version and the newest 50 are never deleted, so a site can sit above the limit if everything older is protected |
+| `MAX_PUBLISHES_PER_HOUR` | `20` | `POST /sites/:id/publish` | 429 with `Retry-After` (seconds until a slot frees) per site per rolling hour |
+
+The per-file upload limit stays a constant of 5 MB (`src/routes/assets.ts`). The publish count lives in the `publish_events` table (one row per attempt that passed validation; rows older than a day are deleted on the next publish of that site), because publishing does not create a `site_versions` row. Apply the new migration (`wrangler d1 migrations apply ministry-sites --remote`) before deploying. Counts are read before the write, so two simultaneous requests can overshoot a limit by one; that is accepted.
+
+### Response headers
+
+Every API response (`src/security.ts`) carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, `Permissions-Policy: camera=(), microphone=(), geolocation=()` and, over HTTPS, `Strict-Transport-Security: max-age=31536000; includeSubDomains`. Routes under `/sites`, `/ai`, `/admin` and `/orgs` (errors included) also send `Cache-Control: no-store`.
+
+Published-site responses (pages, images, thank-you and error pages, redirects, form answers, `robots.txt`, `sitemap.xml`) carry nosniff, the same `Referrer-Policy`, `X-Frame-Options: SAMEORIGIN`, HSTS and a Content-Security-Policy:
+
+```
+default-src 'none'; img-src 'self' data: https:; style-src 'unsafe-inline'; font-src 'self'; form-action 'self' https://<PUBLIC_SITES_HOST>; base-uri 'none'; frame-ancestors 'self'
+```
+
+There is no `script-src`, so no script runs on a published page (the templates emit none; the JSON-LD block is inert data). HSTS has `includeSubDomains` only on `PUBLIC_SITES_HOST` and its subdomains; on a customer domain it is `max-age=31536000` alone, because the customer's other subdomains are not ours to force onto HTTPS. A page whose contact section has a custom `formEndpoint` on https gets that origin added to `form-action` (publishing records it in the page's object metadata as `formOrigins`).
+
+### Link safety at publish
+
+`sanitizeDocumentForPublish` (`src/publishSafety.ts`) runs on the localized document of every language before rendering. A link survives only if its `href` is `http`, `https`, `mailto`, `tel`, a `#fragment` or a relative path without `..`; scheme checks ignore case, leading whitespace and embedded control characters (`  JaVa\tScRiPt:` is dropped). A link object with any other `href` is removed from its section, and a contact `formEndpoint` that fails the same test is cleared. Control characters are stripped from every string (tab, newline and carriage return stay in free text).
+
+### robots.txt and sitemap.xml
+
+Publishing writes `robots.txt` and `sitemap.xml` next to `index.html`, and hosting serves them like any other object (`/<slug>/robots.txt`, `<slug>.sites.shofar.io/robots.txt`, `/robots.txt` on a customer domain). `robots.txt` allows everything and names the sitemap; `sitemap.xml` lists the primary page and each language page with absolute URLs and `xhtml:link` hreflang alternates (plus `x-default`). All URLs, and the canonical/hreflang/Open Graph URLs in the pages (`RenderOptions.canonicalUrl`), are built from `PUBLIC_SITES_HOST` and the slug, so on a customer domain they still point at the sites-host address. Sites published before this change get both files on their next publish.
+
+### Logging
+
+Error lines are one JSON object with `event` and `request_id` (the `cf-ray` header, else a UUID; `src/log.ts`). Logs never contain tokens, secrets, email bodies, visitor addresses or documents: error messages go through `scrub` (masks JWTs, bearer tokens, API keys and email addresses, and truncates), and upstream AI SDK errors are logged by class and status only. AI call logs stay `action`, `provider`, `model`, token counts and latency.
 
 ## Secrets on the deployed Worker
 

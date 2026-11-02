@@ -8,12 +8,17 @@ import {
   publishedImagePrefix,
   publishedIndexKey,
   publishedLanguageIndexKey,
+  parseFormOrigins,
   publishedLanguageThanksKey,
+  publishedRobotsKey,
+  publishedSitemapKey,
   publishedThanksKey,
 } from "./published";
 import { handleContactSubmission } from "./contact";
 import { domains, sites } from "./db/schema";
+import { errorFields, logError, requestIdOf } from "./log";
 import { SLUG_PATTERN } from "./routes/sites";
+import { hostedContentSecurityPolicy, withHostedHeaders } from "./security";
 import type { AppEnv } from "./types";
 
 const WEB_APP_URL = "https://build.shofar.io";
@@ -64,13 +69,14 @@ function methodNotAllowed(): Response {
 
 /**
  * Streams one object of a published site: its index at "/", a language page at "/<lang>/", a thank-you
- * page at "/thanks/" or "/<lang>/thanks/", or an image under "/images/". `base` is the URL prefix of the
+ * page at "/thanks/" or "/<lang>/thanks/", "/robots.txt", "/sitemap.xml", or an image under "/images/". `base` is the URL prefix of the
  * site root ("" or "/<slug>"), used for the redirects that add a trailing slash.
  */
 async function serveSiteFile(c: Context<AppEnv>, siteId: string, base: string, rest: string, search: string): Promise<Response> {
   let key: string;
   let cacheControl: string;
   let isPage = false;
+  let textType: string | undefined;
   let pageLanguage: string | undefined;
   const languageMatch = /^\/([^/]+)(\/)?$/.exec(rest);
   const lang = languageMatch?.[1];
@@ -100,6 +106,10 @@ async function serveSiteFile(c: Context<AppEnv>, siteId: string, base: string, r
       if (!(await c.env.PUBLISHED.head(key))) return notFoundPage();
       return redirect(301, `${base}/${lang}/${search}`);
     }
+  } else if (rest === "/robots.txt" || rest === "/sitemap.xml") {
+    key = rest === "/robots.txt" ? publishedRobotsKey(siteId) : publishedSitemapKey(siteId);
+    cacheControl = "public, max-age=3600";
+    textType = rest === "/robots.txt" ? "text/plain; charset=utf-8" : "application/xml; charset=utf-8";
   } else if (rest.startsWith("/images/") && IMAGE_FILE_PATTERN.test(rest.slice("/images/".length))) {
     key = `${publishedImagePrefix(siteId)}${rest.slice("/images/".length)}`;
     cacheControl = "public, max-age=31536000, immutable";
@@ -116,6 +126,14 @@ async function serveSiteFile(c: Context<AppEnv>, siteId: string, base: string, r
     headers.set("Content-Type", "text/html; charset=utf-8");
     const contentLanguage = pageLanguage ?? object.customMetadata?.language;
     if (contentLanguage && LANGUAGE_TAG_PATTERN.test(contentLanguage)) headers.set("Content-Language", contentLanguage);
+  }
+  if (textType) headers.set("Content-Type", textType);
+  if (isPage) {
+    // A form endpoint the author chose on purpose (recorded at publish time) may receive the post.
+    const formOrigins = parseFormOrigins(object.customMetadata?.formOrigins);
+    if (formOrigins.length > 0) {
+      headers.set("Content-Security-Policy", hostedContentSecurityPolicy(c.env.PUBLIC_SITES_HOST?.toLowerCase(), formOrigins));
+    }
   }
   headers.set("ETag", object.httpEtag);
   headers.set("Cache-Control", cacheControl);
@@ -143,7 +161,7 @@ async function serveCustomDomain(c: Context<AppEnv>, url: URL, hostname: string)
   if (url.pathname === "/contact") {
     if (match.kind === "redirect") return redirect(301, await primaryLocation(c, match, url));
     // Submissions are accepted for any site with a contact address, published or not.
-    return handleContactSubmission(c.req.raw, c.env, match.slug, "");
+    return handleContactSubmission(c.req.raw, c.env, match.slug, "", requestIdOf(c));
   }
   if (c.req.method !== "GET" && c.req.method !== "HEAD") return methodNotAllowed();
   if (match.status !== "published") return notFoundPage();
@@ -176,6 +194,20 @@ async function primaryLocation(c: Context<AppEnv>, site: { siteId: string; slug:
 export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
   const sitesHost = c.env.PUBLIC_SITES_HOST?.toLowerCase();
   const url = new URL(c.req.url);
+  let response: Response | null;
+  try {
+    response = await routeHostedRequest(c, url, sitesHost);
+  } catch (err) {
+    // A failure here belongs to a hosted request, so the error answer carries the hosted headers too.
+    logError("hosting_error", requestIdOf(c), { method: c.req.method, host: url.hostname, ...errorFields(err) });
+    response = Response.json({ error: "Internal server error" }, { status: 500, headers: { "Cache-Control": "no-store" } });
+  }
+  if (response) return withHostedHeaders(response, url, sitesHost);
+  return next();
+});
+
+/** The response for a request to the sites host or a customer domain, or null when the request is for the API itself. */
+async function routeHostedRequest(c: Context<AppEnv>, url: URL, sitesHost: string | undefined): Promise<Response | null> {
   const hostname = url.hostname.toLowerCase();
 
   if (!sitesHost || !isSitesHost(hostname, sitesHost)) {
@@ -184,7 +216,7 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
       const response = await serveCustomDomain(c, url, hostname);
       if (response) return response;
     }
-    return next();
+    return null;
   }
 
   const isContactPath = hostname === sitesHost ? /^\/[^/]+\/contact$/.test(url.pathname) : url.pathname === "/contact";
@@ -209,7 +241,7 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
   if (!SLUG_PATTERN.test(slug)) return notFoundPage();
 
   // Submissions are accepted for any site with a contact address, published or not.
-  if (rest === "/contact") return handleContactSubmission(c.req.raw, c.env, slug, base);
+  if (rest === "/contact") return handleContactSubmission(c.req.raw, c.env, slug, base, requestIdOf(c));
 
   const [site] = await drizzle(c.env.DB)
     .select({ id: sites.id })
@@ -218,4 +250,4 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
     .limit(1);
   if (!site) return notFoundPage();
   return serveSiteFile(c, site.id, base, rest, url.search);
-});
+}

@@ -1,10 +1,11 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { loadAuthorizedSite } from "../access";
 import { assets } from "../db/schema";
 import { newId } from "../ids";
+import { limitsFor } from "../limits";
 import type { AppEnv } from "../types";
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -67,6 +68,16 @@ assetRoutes.post(
     const bytes = await file.arrayBuffer();
     if (!matchesMagicBytes(file.type, new Uint8Array(bytes, 0, Math.min(12, bytes.byteLength)))) {
       return c.json({ error: "File content does not match its declared type" }, 415);
+    }
+
+    // Storage per site is the sum of what its uploads weigh; refuse the file that would push it over.
+    const { maxSiteStorageBytes } = limitsFor(c.env);
+    const [stored] = await db
+      .select({ total: sql<number>`coalesce(sum(${assets.bytes}), 0)` })
+      .from(assets)
+      .where(eq(assets.siteId, site.id));
+    if ((stored?.total ?? 0) + bytes.byteLength > maxSiteStorageBytes) {
+      return c.json({ error: "Site storage limit reached. Delete unused images first.", limit: maxSiteStorageBytes }, 413);
     }
 
     const key = `sites/${site.id}/${crypto.randomUUID()}.${ALLOWED_TYPES[file.type]}`;

@@ -5,6 +5,9 @@
   "compatibility_date": "2026-10-13",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
+  // Only the custom domains below are entry points; no *.workers.dev or preview URLs.
+  "workers_dev": false,
+  "preview_urls": false,
 
   // Production hostname on the shofar.io zone (DNS and TLS managed by Cloudflare).
   // sites.shofar.io serves published sites straight from the PUBLISHED bucket (see src/hosting.ts).
@@ -22,6 +25,14 @@
     "ANTHROPIC_MODEL": "claude-opus-5-5",
     // AI calls allowed per user per UTC day.
     "AI_DAILY_LIMIT": "30",
+    // Per-user and per-site limits (see README). Sites per non-admin user across their organizations.
+    "MAX_SITES_PER_USER": "10",
+    // Bytes of uploaded images per site (100 MB).
+    "MAX_SITE_STORAGE_BYTES": "104857600",
+    // Saved versions per site; beyond this the oldest are pruned (never the current one or the newest 50).
+    "MAX_VERSIONS_PER_SITE": "500",
+    // Publishes per site per rolling hour.
+    "MAX_PUBLISHES_PER_HOUR": "20",
     // Hostname that serves published sites (path form: sites.shofar.io/<slug>/).
     "PUBLIC_SITES_HOST": "sites.shofar.io",
     // This API's own hostname; the hosting handler never treats it as a customer domain.

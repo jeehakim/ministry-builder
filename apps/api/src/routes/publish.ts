@@ -1,13 +1,18 @@
 import type { ImageRef } from "@ministry/schema";
 import { languageName, localizeDocument, SiteDocument, siteLanguages } from "@ministry/schema";
 import { renderSite, renderThanksPage, type RenderOptions } from "@ministry/templates";
-import { eq } from "drizzle-orm";
+import { and, asc, eq, gte, lt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { isSiteAssetKey, loadAuthorizedSite } from "../access";
-import { siteVersions, sites } from "../db/schema";
+import { publishEvents, siteVersions, sites } from "../db/schema";
+import { newId } from "../ids";
+import { limitsFor, PUBLISH_WINDOW_MS } from "../limits";
+import { sanitizeDocumentForPublish } from "../publishSafety";
+import { buildRobotsTxt, buildSitemapXml, languagePageUrl } from "../seo";
 import {
   deleteKeys,
+  externalFormOrigins,
   LANGUAGE_PATH_PATTERN,
   LANGUAGE_TAG_PATTERN,
   listKeys,
@@ -16,7 +21,10 @@ import {
   publishedLanguageIndexKey,
   publishedLanguageThanksKey,
   publishedPrefix,
+  publishedRobotsKey,
+  publishedSitemapKey,
   publishedThanksKey,
+  publicSiteUrl,
   publishedUrlFor,
   relativizeRootLinks,
 } from "../published";
@@ -63,18 +71,47 @@ publishRoutes.post("/sites/:id/publish", async (c) => {
   const parsed = version ? SiteDocument.safeParse(JSON.parse(version.document)) : null;
   if (!parsed?.success) return c.json({ error: "Current version is not a valid site document" }, 409);
 
+  // At most N publishes per site per rolling hour. `publish_events` holds one row per attempt that got this far;
+  // site_versions cannot be counted instead because publishing does not create a version.
+  const { maxPublishesPerHour } = limitsFor(c.env);
+  const now = Date.now();
+  const recent = await db
+    .select({ createdAt: publishEvents.createdAt })
+    .from(publishEvents)
+    .where(and(eq(publishEvents.siteId, site.id), gte(publishEvents.createdAt, new Date(now - PUBLISH_WINDOW_MS))))
+    .orderBy(asc(publishEvents.createdAt));
+  if (recent.length >= maxPublishesPerHour) {
+    // A slot frees up when the event that puts the count over the limit leaves the window.
+    const blocking = recent[recent.length - maxPublishesPerHour];
+    const retryAfter = Math.max(1, Math.ceil(((blocking?.createdAt.getTime() ?? now) + PUBLISH_WINDOW_MS - now) / 1000));
+    return c.json(
+      { error: `Publish limit reached (${maxPublishesPerHour} per hour for this site). Try again later.`, limit: maxPublishesPerHour, retryAfterSeconds: retryAfter },
+      429,
+      { "Retry-After": String(retryAfter) },
+    );
+  }
+  await db.batch([
+    db.insert(publishEvents).values({ id: newId("pub"), siteId: site.id, userId: c.var.user.id }),
+    db.delete(publishEvents).where(and(eq(publishEvents.siteId, site.id), lt(publishEvents.createdAt, new Date(now - 24 * PUBLISH_WINDOW_MS)))),
+  ]);
+
   // The primary language is the site root; every other language is a sub-page. A language that
   // is not a plain code would become an odd object key, so it is skipped rather than published.
   const doc = parsed.data;
   const primary = doc.meta.language;
   const languages = siteLanguages(doc).filter((lang) => lang === primary || LANGUAGE_PATH_PATTERN.test(lang));
 
+  // Absolute address of the site root on the sites host; canonical URLs, hreflang alternates and the sitemap derive from it.
+  const siteUrl = publicSiteUrl(c.env, site.slug);
+
   // Local images are copied once under images/; absolute URLs are left as the author wrote them.
   const pages = languages.map((lang) => {
     const imagesDir = lang === primary ? "images/" : "../images/";
     const key = lang === primary ? publishedIndexKey(site.id) : publishedLanguageIndexKey(site.id, lang);
-    const localized = localizeDocument(doc, lang);
+    // Sanitize after localizing: a translation overlay can replace a link target with an unsafe one.
+    const localized = sanitizeDocumentForPublish(localizeDocument(doc, lang));
     const rendered = renderSite(localized, {
+      canonicalUrl: languagePageUrl(siteUrl, primary, lang),
       imageUrl: (ref) => (ABSOLUTE_URL.test(ref.src) ? ref.src : `${imagesDir}${basename(ref.src)}`),
       languageLinks: languageLinksFor(languages, primary, lang),
       // Resolves to /<slug>/contact from both /<slug>/ and /<slug>/<lang>/ (see handleContactSubmission).
@@ -83,7 +120,7 @@ publishRoutes.post("/sites/:id/publish", async (c) => {
     // Both thank-you pages sit one folder below their language page, so "../" leads back to it.
     const thanksKey = lang === primary ? publishedThanksKey(site.id) : publishedLanguageThanksKey(site.id, lang);
     const thanksHtml = renderThanksPage(localized, { backHref: "../" });
-    return { lang, key, html: rendered.html, images: rendered.images, thanksKey, thanksHtml };
+    return { lang, key, html: rendered.html, images: rendered.images, thanksKey, thanksHtml, formOrigins: externalFormOrigins(localized) };
   });
   const images = pages.flatMap((page) => page.images);
 
@@ -104,14 +141,24 @@ publishRoutes.post("/sites/:id/publish", async (c) => {
   }
 
   for (const page of pages) {
-    const options = {
-      httpMetadata: { contentType: "text/html; charset=utf-8" },
-      // Lets the hosting handler answer with Content-Language without reading the page.
-      ...(LANGUAGE_TAG_PATTERN.test(page.lang) ? { customMetadata: { language: page.lang } } : {}),
-    };
-    await c.env.PUBLISHED.put(page.key, relativizeRootLinks(page.html), options);
-    await c.env.PUBLISHED.put(page.thanksKey, relativizeRootLinks(page.thanksHtml), options);
+    const httpMetadata = { contentType: "text/html; charset=utf-8" };
+    // Lets the hosting handler answer with Content-Language without reading the page.
+    const language: Record<string, string> = LANGUAGE_TAG_PATTERN.test(page.lang) ? { language: page.lang } : {};
+    // Origins of custom form endpoints, so the page's Content-Security-Policy lets its form post there.
+    const formOrigins: Record<string, string> = page.formOrigins.length > 0 ? { formOrigins: page.formOrigins.join(" ") } : {};
+    await c.env.PUBLISHED.put(page.key, relativizeRootLinks(page.html), { httpMetadata, customMetadata: { ...language, ...formOrigins } });
+    await c.env.PUBLISHED.put(page.thanksKey, relativizeRootLinks(page.thanksHtml), { httpMetadata, customMetadata: language });
   }
+
+  // Crawler files sit next to index.html, so hosting only has to serve objects.
+  await c.env.PUBLISHED.put(publishedRobotsKey(site.id), buildRobotsTxt(siteUrl), {
+    httpMetadata: { contentType: "text/plain; charset=utf-8" },
+  });
+  await c.env.PUBLISHED.put(
+    publishedSitemapKey(site.id),
+    buildSitemapXml(siteUrl, pages.map((page) => page.lang)),
+    { httpMetadata: { contentType: "application/xml; charset=utf-8" } },
+  );
 
   // Stale images, and language pages of languages that are no longer in the document.
   const written = new Set(pages.flatMap((page) => [page.key, page.thanksKey]));

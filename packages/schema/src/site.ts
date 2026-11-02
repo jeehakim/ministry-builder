@@ -21,15 +21,23 @@ export const Link = z.object({
 });
 export type Link = z.infer<typeof Link>;
 
+/** Hex colors only (#rgb, #rrggbb, #rrggbbaa). Theme values are written into a <style> block, so they must never carry CSS or HTML syntax. */
+export const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+/** A CSS font-family list: names, quotes, commas, spaces and hyphens. No braces, angle brackets, slashes, semicolons or backslashes. */
+export const FONT_STACK = /^[A-Za-z0-9 ,'"-]{1,200}$/;
+
+const hexColor = (fallback: string) => z.string().regex(HEX_COLOR, "Use a hex color like #1f4e79").default(fallback);
+const fontStack = (fallback: string) => z.string().regex(FONT_STACK, "Font names only").default(fallback);
+
 export const Theme = z.object({
-  templateId: z.string().default("classic"),
-  /** CSS color strings. Templates expose these as CSS custom properties. */
-  primary: z.string().default("#1f4e79"),
-  accent: z.string().default("#d9a441"),
-  background: z.string().default("#ffffff"),
-  text: z.string().default("#1a1a1a"),
-  headingFont: z.string().default("Georgia, 'Times New Roman', serif"),
-  bodyFont: z.string().default("system-ui, -apple-system, 'Segoe UI', sans-serif"),
+  templateId: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "Unknown template id").default("classic"),
+  /** Hex color strings. Templates expose these as CSS custom properties. */
+  primary: hexColor("#1f4e79"),
+  accent: hexColor("#d9a441"),
+  background: hexColor("#ffffff"),
+  text: hexColor("#1a1a1a"),
+  headingFont: fontStack("Georgia, 'Times New Roman', serif"),
+  bodyFont: fontStack("system-ui, -apple-system, 'Segoe UI', sans-serif"),
   heroStyle: z.enum(["image", "solid", "split"]).default("image"),
   radius: z.enum(["none", "small", "large"]).default("small"),
 });

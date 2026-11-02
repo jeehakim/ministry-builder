@@ -1,0 +1,27 @@
+# Cloudflare Workers static assets read this file (it is copied from public/ into dist/ by Vite).
+# The Content-Security-Policy value is generated from src/lib/csp.ts; csp.test.ts fails if they differ.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://clerk.build.shofar.io https://challenges.cloudflare.com https://*.protect.clerk.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://api.build.shofar.io https://clerk.build.shofar.io https://*.clerk.accounts.dev https://*.protect.clerk.com:*; frame-src 'self' https://clerk.build.shofar.io blob: https://challenges.cloudflare.com https://*.protect.clerk.com; worker-src 'self' blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+
+# Vite fingerprints everything under /assets/, so these files never change under the same URL.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# The entry document must be revalidated on every load so a deploy is picked up at once.
+# The SPA fallback serves it for client routes like /sites/:id, which have no rule of their own
+# and fall back to the Workers default (max-age=0, must-revalidate).
+/
+  Cache-Control: no-cache
+
+/index.html
+  Cache-Control: no-cache
+
+# Not fingerprinted, so it must revalidate too.
+/theme-init.js
+  Cache-Control: no-cache

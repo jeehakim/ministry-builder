@@ -53,3 +53,11 @@ test("localizeDocument merges overlays and setTranslatedSection stores only diff
   const reverted = setTranslatedSection(next, "en", { ...hero, heading: "안녕", subheading: "환영" });
   assert.equal(reverted.translations["en"]?.sections["hero"], undefined);
 });
+
+test("theme rejects CSS or HTML syntax in colors and fonts", () => {
+  const base = { meta: { orgName: "x" }, sections: [] };
+  assert.throws(() => parseSiteDocument({ ...base, theme: { primary: "red}</style><script>alert(1)</script><style>" } }));
+  assert.throws(() => parseSiteDocument({ ...base, theme: { headingFont: "Georgia; } </style>" } }));
+  const ok = parseSiteDocument({ ...base, theme: { primary: "#0F2A4A", headingFont: "system-ui, 'Segoe UI', sans-serif" } });
+  assert.equal(ok.theme.primary, "#0F2A4A");
+});

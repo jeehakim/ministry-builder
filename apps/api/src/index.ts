@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { requireAuth } from "./auth";
 import { serveSites } from "./hosting";
+import { errorFields, logError, requestIdOf, scrub } from "./log";
 import { adminRoutes } from "./routes/admin";
 import { aiRoutes } from "./routes/ai";
 import { assetRoutes } from "./routes/assets";
@@ -9,12 +10,17 @@ import { domainRoutes } from "./routes/domains";
 import { messageRoutes } from "./routes/messages";
 import { publishRoutes } from "./routes/publish";
 import { siteRoutes } from "./routes/sites";
+import { apiSecurityHeaders, requestContext } from "./security";
 import type { AppEnv } from "./types";
 
 const app = new Hono<AppEnv>();
 
-// Published sites are public and static: answer them before CORS and auth ever run.
+app.use("*", requestContext);
+
+// Published sites are public and static: answer them before CORS and auth ever run. They carry their
+// own headers (see withHostedHeaders), so the API headers below only wrap what falls through.
 app.use("*", serveSites);
+app.use("*", apiSecurityHeaders);
 
 app.use(
   "*",
@@ -48,7 +54,13 @@ app.route("/", adminRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
 app.onError((err, c) => {
-  console.error(err);
+  // Name, scrubbed message and stack only: no request body, header or query string reaches the log.
+  logError("unhandled_error", requestIdOf(c), {
+    method: c.req.method,
+    path: new URL(c.req.url).pathname,
+    ...errorFields(err),
+    stack: err instanceof Error && err.stack ? scrub(err.stack, 1500) : undefined,
+  });
   return c.json({ error: "Internal server error" }, 500);
 });
 

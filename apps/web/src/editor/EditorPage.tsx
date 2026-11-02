@@ -14,6 +14,7 @@ import { AlertCircle, ArrowLeft, ExternalLink, Monitor, Smartphone } from "lucid
 import { toast } from "sonner";
 import type { SiteInfo } from "../api";
 import { useBackend } from "../backend-context";
+import { ApiUnreachableBanner } from "../components/ApiUnreachableBanner";
 import { PublishModal } from "../components/PublishModal";
 import { buildExportZip, downloadBlob, exportFileName } from "../lib/exportZip";
 import { previewLanguageLinks } from "../lib/languages";
@@ -58,7 +59,7 @@ function Editor({ siteId }: { siteId: string }) {
   }, [editor.save]);
 
   if (editor.load.kind === "loading") return <LoadingScreen />;
-  if (editor.load.kind === "error") return <ErrorScreen message={editor.load.message} />;
+  if (editor.load.kind === "error") return <ErrorScreen message={editor.load.message} onRetry={editor.load.network ? editor.retry : undefined} />;
 
   return (
     <SiteIdProvider value={siteId}>
@@ -368,13 +369,20 @@ function LoadingScreen() {
   );
 }
 
-function ErrorScreen({ message }: { message: string }) {
+/** `onRetry` is given only when the failure was a network one, which shows the unreachable banner instead of the message. */
+function ErrorScreen({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <div className="flex h-dvh flex-col items-center justify-center gap-3 p-6 text-center">
-      <AlertCircle className="size-6 text-destructive" aria-hidden="true" />
-      <p role="alert" className="text-sm">
-        {message}
-      </p>
+      {onRetry ? (
+        <ApiUnreachableBanner onRetry={onRetry} className="max-w-md" />
+      ) : (
+        <>
+          <AlertCircle className="size-6 text-destructive" aria-hidden="true" />
+          <p role="alert" className="text-sm">
+            {message}
+          </p>
+        </>
+      )}
       <Button asChild variant="outline" size="sm">
         <Link to="/">
           <ArrowLeft />

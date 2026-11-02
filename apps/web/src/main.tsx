@@ -8,7 +8,9 @@ import { ThemeProvider, useTheme } from "@/lib/theme";
 import { App } from "./App";
 import { ApiBackendProvider, LocalBackendProvider } from "./backend-context";
 import { Brand } from "./components/Brand";
-import { CLERK_KEY, LOCAL_MODE } from "./env";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { MisconfiguredScreen } from "./components/MisconfiguredScreen";
+import { CLERK_KEY, LOCAL_MODE, MISSING_CONFIG } from "./env";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./index.css";
@@ -17,7 +19,7 @@ function Providers({ children }: { children: ReactNode }) {
   const { resolvedTheme } = useTheme();
   if (LOCAL_MODE) return <LocalBackendProvider>{children}</LocalBackendProvider>;
   return (
-    <ClerkProvider publishableKey={CLERK_KEY} appearance={{ baseTheme: resolvedTheme === "dark" ? dark : undefined }}>
+    <ClerkProvider publishableKey={CLERK_KEY} afterSignOutUrl="/" appearance={{ baseTheme: resolvedTheme === "dark" ? dark : undefined }}>
       <ClerkLoading>
         <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-muted/30 p-6">
           <Brand className="justify-center" />
@@ -52,15 +54,21 @@ if (!rootEl) throw new Error("Missing #root element.");
 
 createRoot(rootEl).render(
   <StrictMode>
-    <BrowserRouter>
-      <ThemeProvider>
-        <TooltipProvider delayDuration={300}>
-          <Providers>
-            <App />
-          </Providers>
-          <Toaster position="bottom-right" richColors />
-        </TooltipProvider>
-      </ThemeProvider>
-    </BrowserRouter>
+    <ErrorBoundary>
+      {MISSING_CONFIG ? (
+        <MisconfiguredScreen missing={MISSING_CONFIG} />
+      ) : (
+        <BrowserRouter>
+          <ThemeProvider>
+            <TooltipProvider delayDuration={300}>
+              <Providers>
+                <App />
+              </Providers>
+              <Toaster position="bottom-right" richColors />
+            </TooltipProvider>
+          </ThemeProvider>
+        </BrowserRouter>
+      )}
+    </ErrorBoundary>
   </StrictMode>,
 );

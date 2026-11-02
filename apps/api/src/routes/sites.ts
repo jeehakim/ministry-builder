@@ -1,12 +1,15 @@
 import { emptySiteDocument, SiteDocument } from "@ministry/schema";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { loadAuthorizedSite } from "../access";
-import { aiUsage, assets, formSubmissions, organizations, siteVersions, sites } from "../db/schema";
+import { aiUsage, assets, domains, formSubmissions, organizations, publishEvents, siteVersions, sites } from "../db/schema";
 import { newId } from "../ids";
+import { limitsFor } from "../limits";
 import { deleteKeys, listKeys, publishedPrefix, publishedUrlFor } from "../published";
+import { deleteCustomHostname, isCloudflareConfigured } from "../cloudflare";
+import { pruneVersions } from "../versions";
 import { countMessages } from "./messages";
 import type { AppEnv } from "../types";
 
@@ -77,6 +80,19 @@ siteRoutes.post("/sites", bodyLimit({ maxSize: 16 * 1024, onError: (c) => c.json
 
   const db = drizzle(c.env.DB);
   const user = c.var.user;
+
+  // Sites across every organization the user owns. Staff (admins) build sites for others and are exempt.
+  if (user.role !== "admin") {
+    const { maxSitesPerUser } = limitsFor(c.env);
+    const [owned] = await db
+      .select({ n: count() })
+      .from(sites)
+      .innerJoin(organizations, eq(sites.orgId, organizations.id))
+      .where(eq(organizations.ownerUserId, user.id));
+    if ((owned?.n ?? 0) >= maxSitesPerUser) {
+      return c.json({ error: `Site limit reached (${maxSitesPerUser} sites per account)`, limit: maxSitesPerUser }, 429);
+    }
+  }
 
   let slug = requestedSlug ?? slugify(orgName);
   if (RESERVED_SLUGS.has(slug)) slug = `${slug}-site`;
@@ -181,6 +197,7 @@ siteRoutes.put(
         .set({ currentVersionId: versionId, updatedAt: sql`(unixepoch() * 1000)` })
         .where(eq(sites.id, site.id)),
     ]);
+    await pruneVersions(db, site.id, versionId, limitsFor(c.env).maxVersionsPerSite);
     return c.json({ versionId });
   },
 );
@@ -212,10 +229,20 @@ siteRoutes.delete("/sites/:id", async (c) => {
   await deleteKeys(c.env.PUBLISHED, await listKeys(c.env.PUBLISHED, publishedPrefix(site.id)));
   await deleteKeys(c.env.IMAGES, await listKeys(c.env.IMAGES, `sites/${site.id}/`));
 
+  // Custom hostnames and their rows go first: the domains table has no cascade, and a dangling
+  // hostname on Cloudflare would keep answering for a site that no longer exists.
+  const siteDomains = await db.select({ id: domains.id, cfId: domains.cfCustomHostnameId }).from(domains).where(eq(domains.siteId, site.id));
+  if (isCloudflareConfigured(c.env)) {
+    for (const d of siteDomains) if (d.cfId) await deleteCustomHostname(c.env, d.cfId).catch(() => undefined);
+  }
+  await db.delete(domains).where(eq(domains.siteId, site.id));
+
   await db.update(sites).set({ currentVersionId: null }).where(eq(sites.id, site.id));
   await db.batch([
-    db.update(aiUsage).set({ siteId: null }).where(eq(aiUsage.siteId, site.id)),
+    // Keep token counts for cost records, drop the site reference and the owner's text.
+    db.update(aiUsage).set({ siteId: null, requestJson: null, resultJson: null }).where(eq(aiUsage.siteId, site.id)),
     db.delete(formSubmissions).where(eq(formSubmissions.siteId, site.id)),
+    db.delete(publishEvents).where(eq(publishEvents.siteId, site.id)),
     db.delete(assets).where(eq(assets.siteId, site.id)),
     db.delete(siteVersions).where(eq(siteVersions.siteId, site.id)),
     db.delete(sites).where(eq(sites.id, site.id)),

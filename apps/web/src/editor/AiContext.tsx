@@ -13,6 +13,7 @@ import { AiError } from "../api";
 import type { AiBackend } from "../backend";
 import { useBackend } from "../backend-context";
 import { aiFailureText } from "../lib/aiMessages";
+import { useBeforeUnloadGuard } from "../lib/useBeforeUnloadGuard";
 import { assetKeyFromSrc } from "../lib/urls";
 import { useSiteId } from "./EditorContext";
 
@@ -94,6 +95,9 @@ export function AiProvider({ children }: { children: ReactNode }) {
       mounted.current = false;
     };
   }, []);
+
+  // A draft or translation that is reloaded away is lost (and still counts against the daily quota).
+  useBeforeUnloadGuard(busy[DRAFT_BUSY_KEY] === true || busy[TRANSLATE_BUSY_KEY] === true);
 
   const refreshUsage = useCallback(async () => {
     if (!ai) return;

@@ -11,8 +11,10 @@ import {
 import type { SiteSummary } from "./api";
 import { LOCAL_SITE_ID } from "./backend";
 import { useBackend } from "./backend-context";
+import { ApiUnreachableBanner } from "./components/ApiUnreachableBanner";
 import { Brand } from "./components/Brand";
 import { HelpMenu } from "./components/HelpMenu";
+import { isNetworkError } from "./lib/errors";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { PublishedBadge } from "./components/PublishedBadge";
 import { UserMenu } from "./components/UserMenu";
@@ -31,7 +33,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 
-type State = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready"; sites: SiteSummary[] };
+type State = { kind: "loading" } | { kind: "error"; message: string; network: boolean } | { kind: "ready"; sites: SiteSummary[] };
 
 export function Home() {
   const backend = useBackend();
@@ -43,6 +45,8 @@ export function Home() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<SiteSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // Bumped by the banner's retry button to load the list again.
+  const [attempt, setAttempt] = useState(0);
 
   async function handleDelete() {
     if (!pendingDelete || !backend.deleteSite) return;
@@ -61,6 +65,7 @@ export function Home() {
 
   useEffect(() => {
     let cancelled = false;
+    setState({ kind: "loading" });
     backend
       .listSites()
       .then(async (sites) => {
@@ -72,12 +77,12 @@ export function Home() {
       })
       .then((sites) => !cancelled && setState({ kind: "ready", sites }))
       .catch((err: unknown) => {
-        if (!cancelled) setState({ kind: "error", message: err instanceof Error ? err.message : "Could not load your sites." });
+        if (!cancelled) setState({ kind: "error", message: err instanceof Error ? err.message : "Could not load your sites.", network: isNetworkError(err) });
       });
     return () => {
       cancelled = true;
     };
-  }, [backend]);
+  }, [backend, attempt]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -131,7 +136,9 @@ export function Home() {
           </div>
         ) : null}
 
-        {state.kind === "error" ? (
+        {state.kind === "error" && state.network ? <ApiUnreachableBanner onRetry={() => setAttempt((n) => n + 1)} /> : null}
+
+        {state.kind === "error" && !state.network ? (
           <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
             {state.message}
           </p>

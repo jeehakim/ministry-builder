@@ -190,8 +190,10 @@ describe("multi-language publish", () => {
     expect(primary).not.toContain("[en] ");
     expect(primary).toContain(`images/${file}`);
     expect(primary).not.toContain(`../images/${file}`);
-    expect(primary).toContain('<link rel="alternate" hreflang="ko" href="./">');
-    expect(primary).toContain('<link rel="alternate" hreflang="en" href="en/">');
+    // Alternates are absolute (canonicalUrl); the visible switcher links stay relative.
+    expect(primary).toContain(`<link rel="alternate" hreflang="ko" href="https://${HOST}/${site.slug}/">`);
+    expect(primary).toContain(`<link rel="alternate" hreflang="en" href="https://${HOST}/${site.slug}/en/">`);
+    expect(primary).toContain(`<link rel="canonical" href="https://${HOST}/${site.slug}/">`);
     expect(primary).toContain('href="en/"');
 
     const english = await pageText(site.id, "en/index.html");
@@ -199,8 +201,9 @@ describe("multi-language publish", () => {
     expect(english).toContain("[en] 작은 교회");
     expect(english).toContain(`../images/${file}`);
     expect(english).not.toContain(`src="images/${file}"`);
-    expect(english).toContain('<link rel="alternate" hreflang="ko" href="../">');
-    expect(english).toContain('<link rel="alternate" hreflang="en" href="./">');
+    expect(english).toContain(`<link rel="alternate" hreflang="ko" href="https://${HOST}/${site.slug}/">`);
+    expect(english).toContain(`<link rel="alternate" hreflang="en" href="https://${HOST}/${site.slug}/en/">`);
+    expect(english).toContain(`<link rel="canonical" href="https://${HOST}/${site.slug}/en/">`);
     expect(english).toContain("English");
     expect(english).toContain("한국어");
 
@@ -211,19 +214,22 @@ describe("multi-language publish", () => {
     expect(await env.PUBLISHED.head(`published/${site.id}/en/images/${file}`)).toBeNull();
   });
 
-  it("links every language from every page, relative to the page being rendered", async () => {
+  it("links every language from every page: absolute alternates in the head, relative switcher links in the body", async () => {
     const { site, doc } = await translatedSite("lang_b", "Three Languages");
     expect((await call("lang_b", `/sites/${site.id}/ai/translate`, jsonInit("POST", { language: "es" }))).status).toBe(200);
     expect((await call("lang_b", `/sites/${site.id}/publish`, { method: "POST" })).status).toBe(200);
 
+    const root = `https://${HOST}/${site.slug}/`;
     const english = await pageText(site.id, "en/index.html");
-    expect(english).toContain('<link rel="alternate" hreflang="ko" href="../">');
-    expect(english).toContain('<link rel="alternate" hreflang="es" href="../es/">');
-    expect(english).toContain('<link rel="alternate" hreflang="en" href="./">');
+    expect(english).toContain(`<link rel="alternate" hreflang="ko" href="${root}">`);
+    expect(english).toContain(`<link rel="alternate" hreflang="es" href="${root}es/">`);
+    expect(english).toContain(`<link rel="alternate" hreflang="en" href="${root}en/">`);
+    // The visible switcher keeps document-relative links so the page works at any host.
+    expect(english).toContain('href="../es/"');
     const spanish = await pageText(site.id, "es/index.html");
-    expect(spanish).toContain('<link rel="alternate" hreflang="en" href="../en/">');
+    expect(spanish).toContain(`<link rel="alternate" hreflang="en" href="${root}en/">`);
     expect(spanish).toContain("Español");
-    expect(await pageText(site.id, "index.html")).toContain('<link rel="alternate" hreflang="es" href="es/">');
+    expect(await pageText(site.id, "index.html")).toContain(`<link rel="alternate" hreflang="es" href="${root}es/">`);
     expect(doc.meta.language).toBe("ko");
   });
 

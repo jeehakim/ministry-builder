@@ -28,6 +28,7 @@ import type { TemplateChoice } from "../ai/provider";
 import { dailyLimit, usedToday, utcDayWindow } from "../ai/usage";
 import { aiUsage, organizations, siteVersions, sites, type Site } from "../db/schema";
 import { newId } from "../ids";
+import { errorFields, logError, requestIdOf, scrub } from "../log";
 import { LANGUAGE_PATH_PATTERN } from "../published";
 import type { AppEnv } from "../types";
 
@@ -147,7 +148,12 @@ async function callProvider<T extends { usage: AiCallUsage }>(
     );
     return result;
   } catch (err) {
-    console.error(JSON.stringify({ event: "ai_call_failed", action, ms: Date.now() - startedAt }), err);
+    // SDK errors can echo the prompt in their message, so only our own AiProviderError text is logged.
+    logError("ai_call_failed", requestIdOf(c), {
+      action,
+      ms: Date.now() - startedAt,
+      ...errorFields(err, err instanceof AiProviderError),
+    });
     const message = err instanceof AiProviderError ? err.message : "The AI service is unavailable right now. Please try again in a moment.";
     return c.json({ error: message }, 502);
   }
@@ -201,7 +207,7 @@ aiRoutes.post("/sites/:id/ai/draft", tooLarge, async (c) => {
   for (const candidate of result.variations) {
     const parsed = SiteDocument.safeParse(candidate.document);
     if (!parsed.success) {
-      console.error("Dropped an invalid AI variation", describeIssues(parsed.error));
+      logError("ai_variation_invalid", requestIdOf(c), { issues: scrub(describeIssues(parsed.error)) });
       continue;
     }
     const document = parsed.data;
@@ -273,7 +279,7 @@ aiRoutes.post("/sites/:id/ai/theme", tooLarge, async (c) => {
   );
   const parsed = Theme.safeParse(result.theme);
   if (!parsed.success) {
-    console.error("Invalid AI theme", describeIssues(parsed.error));
+    logError("ai_theme_invalid", requestIdOf(c), { issues: scrub(describeIssues(parsed.error)) });
     return c.json({ error: "The AI returned a theme we could not use. Please try again." }, 502);
   }
   const response: AiThemeResponse = {
@@ -341,7 +347,7 @@ aiRoutes.post("/sites/:id/ai/translate", tooLarge, async (c) => {
   );
   const overlay = TranslationOverlay.safeParse(result.overlay);
   if (!overlay.success) {
-    console.error("Invalid AI translation", describeIssues(overlay.error));
+    logError("ai_translation_invalid", requestIdOf(c), { issues: scrub(describeIssues(overlay.error)) });
     await usage;
     return c.json({ error: "The AI returned a translation we could not use. Please try again." }, 502);
   }
@@ -362,7 +368,7 @@ aiRoutes.post("/sites/:id/ai/translate", tooLarge, async (c) => {
     translations: { ...document.translations, [language]: overlay.data },
   });
   if (!next.success) {
-    console.error("Translated document is invalid", describeIssues(next.error));
+    logError("ai_translated_document_invalid", requestIdOf(c), { issues: scrub(describeIssues(next.error)) });
     await usage;
     return c.json({ error: "The translation could not be added to this site." }, 502);
   }

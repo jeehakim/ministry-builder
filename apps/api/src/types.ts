@@ -52,6 +52,14 @@ export type Bindings = {
   EMAIL_FROM?: string;
   /** Secret. Resend API key, used when EMAIL_PROVIDER is "resend". */
   RESEND_API_KEY?: string;
+  /** Sites a non-admin user may own across all their organizations, as a string (var). Default 10. */
+  MAX_SITES_PER_USER?: string;
+  /** Total bytes of uploaded images per site (sum of assets.bytes), as a string (var). Default 100 MB. */
+  MAX_SITE_STORAGE_BYTES?: string;
+  /** Saved versions kept per site before the oldest are pruned, as a string (var). Default 500. */
+  MAX_VERSIONS_PER_SITE?: string;
+  /** Publishes allowed per site per rolling hour, as a string (var). Default 20. */
+  MAX_PUBLISHES_PER_HOUR?: string;
   /** Salt mixed into the visitor IP hash used for rate limiting (var). Defaults to "ministry". */
   FORM_SALT?: string;
 };
@@ -64,5 +72,5 @@ export type AuthUser = {
 
 export type AppEnv = {
   Bindings: Bindings;
-  Variables: { user: AuthUser };
+  Variables: { user: AuthUser; requestId?: string };
 };

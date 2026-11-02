@@ -5,6 +5,7 @@ import { createSender } from "./email";
 import { contactNotification } from "./email/notification";
 import { formSubmissions, siteVersions, sites } from "./db/schema";
 import { newId } from "./ids";
+import { errorFields, logError, requestIdFor } from "./log";
 import { LANGUAGE_PATH_PATTERN } from "./published";
 import type { Bindings } from "./types";
 
@@ -107,7 +108,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * path form, "" on the subdomain form). Public and unauthenticated: it validates, rate limits, stores the
  * message and then tries to email it. A delivery failure never reaches the visitor.
  */
-export async function handleContactSubmission(request: Request, env: Bindings, slug: string, base: string): Promise<Response> {
+export async function handleContactSubmission(
+  request: Request,
+  env: Bindings,
+  slug: string,
+  base: string,
+  requestId: string = requestIdFor(request),
+): Promise<Response> {
   if (request.method !== "POST") {
     return new Response("Method not allowed", { status: 405, headers: { Allow: "POST", ...NO_STORE } });
   }
@@ -116,7 +123,8 @@ export async function handleContactSubmission(request: Request, env: Bindings, s
   const [site] = await db
     .select({ id: sites.id, currentVersionId: sites.currentVersionId })
     .from(sites)
-    .where(eq(sites.slug, slug))
+    // Only live sites accept messages: a draft's address was never shown to anyone, so a post to it is abuse.
+    .where(and(eq(sites.slug, slug), eq(sites.status, "published")))
     .limit(1);
   const [version] = site?.currentVersionId
     ? await db.select({ document: siteVersions.document }).from(siteVersions).where(eq(siteVersions.id, site.currentVersionId)).limit(1)
@@ -189,7 +197,8 @@ export async function handleContactSubmission(request: Request, env: Bindings, s
       await db.update(formSubmissions).set({ deliveredAt: new Date(), deliveryError: null }).where(eq(formSubmissions.id, id));
     } catch (err) {
       const reason = (err instanceof Error ? err.message : String(err)).slice(0, MAX_DELIVERY_ERROR);
-      console.error(`Contact form email failed for site ${site.id}, message ${id}: ${reason}`);
+      // The visitor's message and address never go to the log; the provider's reason is scrubbed first.
+      logError("contact_email_failed", requestId, { site_id: site.id, message_id: id, ...errorFields(err) });
       await db.update(formSubmissions).set({ deliveryError: reason }).where(eq(formSubmissions.id, id));
     }
   }

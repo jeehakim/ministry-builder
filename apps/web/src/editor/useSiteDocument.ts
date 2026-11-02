@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { SiteDocument, type Section, type SectionType } from "@ministry/schema";
 import type { SiteInfo } from "../api";
 import { useBackend } from "../backend-context";
+import { isNetworkError } from "../lib/errors";
+import { useBeforeUnloadGuard } from "../lib/useBeforeUnloadGuard";
 import { addSection, formatIssue, moveSection, removeSection, reorderSection, replaceSection, toggleHidden } from "./documentOps";
 
 export type SaveState =
@@ -13,7 +15,8 @@ export type SaveState =
 
 export type LoadState =
   | { kind: "loading" }
-  | { kind: "error"; message: string }
+  /** `network` is true when the API could not be reached at all, so a retry may succeed. */
+  | { kind: "error"; message: string; network: boolean }
   | { kind: "ready"; site: SiteInfo; doc: SiteDocument };
 
 const AUTOSAVE_MS = 1000;
@@ -27,6 +30,8 @@ export function useSiteDocument(siteId: string) {
   const backend = useBackend();
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   const [save, setSave] = useState<SaveState>({ kind: "saved" });
+  // Bumped by retry() to run the load effect again.
+  const [attempt, setAttempt] = useState(0);
   // The last document known to be persisted (or loaded); autosave skips when unchanged.
   const persisted = useRef<SiteDocument | null>(null);
   // Serialises saves so an older request can never finish after a newer one.
@@ -49,12 +54,14 @@ export function useSiteDocument(siteId: string) {
         setLoad({ kind: "ready", site, doc: document });
       })
       .catch((err: unknown) => {
-        if (!cancelled) setLoad({ kind: "error", message: errorText(err) });
+        if (!cancelled) setLoad({ kind: "error", message: errorText(err), network: isNetworkError(err) });
       });
     return () => {
       cancelled = true;
     };
-  }, [backend, siteId]);
+  }, [backend, siteId, attempt]);
+
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
   const doc = load.kind === "ready" ? load.doc : null;
   latestDoc.current = doc;
@@ -115,12 +122,7 @@ export function useSiteDocument(siteId: string) {
   }, [persist]);
 
   const unsaved = save.kind === "unsaved" || save.kind === "saving";
-  useEffect(() => {
-    if (!unsaved) return;
-    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [unsaved]);
+  useBeforeUnloadGuard(unsaved);
 
   const update = useCallback((fn: (doc: SiteDocument) => SiteDocument) => {
     setLoad((current) => (current.kind === "ready" ? { ...current, doc: fn(current.doc) } : current));
@@ -133,6 +135,7 @@ export function useSiteDocument(siteId: string) {
   return {
     load,
     save,
+    retry,
     update,
     updateSite,
     flush,

@@ -3,6 +3,9 @@
   "name": "ministry-web",
   "compatibility_date": "2026-10-13",
   "observability": { "enabled": true },
+  // Only the custom domains below are entry points; no *.workers.dev or preview URLs.
+  "workers_dev": false,
+  "preview_urls": false,
 
   // Production hostname on the shofar.io zone (DNS and TLS managed by Cloudflare).
   "routes": [{ "pattern": "build.shofar.io", "custom_domain": true }],

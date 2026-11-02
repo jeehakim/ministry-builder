@@ -226,11 +226,11 @@ describe("contact form endpoint", () => {
     expect((await hosted(`https://${HOST}/${site.slug}/`, { method: "POST" })).status).toBe(405);
   });
 
-  it("accepts messages for a site that is not published", async () => {
+  it("refuses messages for a site that is not published, so a draft's address cannot be targeted", async () => {
     const draft = await contactSite("form_j", "Form Draft", { publish: false });
     const res = await submit(draft, VALID);
-    expect(res.status).toBe(303);
-    expect(await rows(draft.id)).toHaveLength(1);
+    expect(res.status).toBe(404);
+    expect(await rows(draft.id)).toHaveLength(0);
   });
 });
 

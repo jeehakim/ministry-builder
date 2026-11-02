@@ -329,13 +329,14 @@ describe("hosting on a custom domain", () => {
     const primary = await hosted("https://multilingual.org/");
     expect(primary.status).toBe(200);
     expect(primary.headers.get("content-language")).toBe("ko");
-    expect(await primary.text()).toContain('hreflang="en" href="en/"');
+    expect(await primary.text()).toContain(`hreflang="en" href="https://sites.shofar.io/${site.slug}/en/"`);
+    expect(await (await hosted("https://multilingual.org/")).text()).toContain('href="en/"');
 
     const english = await hosted("https://multilingual.org/en/");
     expect(english.status).toBe(200);
     expect(english.headers.get("content-type")).toBe("text/html; charset=utf-8");
     expect(english.headers.get("content-language")).toBe("en");
-    expect(await english.text()).toContain('hreflang="ko" href="../"');
+    expect(await english.text()).toContain(`hreflang="ko" href="https://sites.shofar.io/${site.slug}/"`);
 
     const redirected = await hosted("https://multilingual.org/en?ref=x", { redirect: "manual" });
     expect(redirected.status).toBe(301);

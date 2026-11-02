@@ -26,21 +26,43 @@ Most small churches, charities, and community groups have a Facebook page and a 
 Ministry Sites is a project of [Shofar Ministry](https://shofar.io) to change that:
 
 - **A page that fits non-profits.** Mission, programs, service times and events, team, stories, a Give section that links to your existing donation platform, and a contact form. Nothing you have to invent.
-- **Fast and accessible by default.** Sites are plain static HTML from reviewed templates. They load instantly on a phone and pass accessibility checks without extra work.
-- **Free to host, forever.** Export a ZIP and drop it on [cloudflare.com/drop](https://cloudflare.com/drop), claim it into your own free Cloudflare account, and add your domain with free SSL. The site lives in *your* account, not ours.
-- **Edit it next year.** Content is structured, so changing a service time is a one-field edit and a re-export, not a rebuild.
-- **AI help on the way.** The roadmap adds a copilot that drafts your copy from rough notes, proposes two or three designs, writes alt text, and translates to a second language (Korean/English first).
+- **AI that writes with you.** Describe the organization in your own words, get three complete page designs to choose from, polish any line, translate the whole site, and never have a fact invented.
+- **Fast and accessible by default.** Sites are plain static HTML from reviewed templates, no scripts. They load instantly on a phone and pass accessibility checks without extra work.
+- **Free to host, forever.** Publish on Ministry Sites in one click, or export a ZIP and drop it on [cloudflare.com/drop](https://cloudflare.com/drop) and own the hosting yourself. Either way there is no monthly fee for the page.
+- **Edit it next year.** Content is structured, so changing a service time is a one-field edit and a republish, not a rebuild.
 
-## What works today (Phase 0)
+## What it does
 
+**Build**
 - Sign in with [Clerk](https://clerk.com), or run with no keys at all in a local, browser-only mode
-- Section editor with drag-and-drop ordering, show/hide, and per-section forms
-- Live preview in a browser frame, desktop and phone widths
-- Image upload with in-browser resize and WebP conversion, plus alt text
-- One template, "Classic", with color, font, hero style, and corner options
-- Light, dark, and system themes
-- ZIP export and a guided publish flow for Cloudflare Drop
-- API on Cloudflare Workers with D1 and R2, versioned saves, and tests that run in the Workers runtime
+- Section editor with drag-and-drop ordering, show/hide, per-section forms and image upload with in-browser resize to WebP
+- Live preview in a browser frame, desktop and phone widths, light and dark themes
+- Three templates (Classic, Modern, Bold) with color, font, hero style and corner options
+
+**AI copilot** (OpenAI today, Claude via `ANTHROPIC_API_KEY`)
+- Draft the whole page from notes, with one or three variations to compare side by side
+- Per-field assists: improve, shorten, warm up, translate, or a custom instruction
+- Alt text for images, a theme from a design reference, full-site translation
+- A daily allowance per user; every call logs model, tokens, inputs and what it produced
+
+**Languages**
+- Any number of languages per site; translations are overlays on the primary content so images, links and layout stay shared
+- Each language publishes at its own path with a switcher, `hreflang` alternates and `Content-Language`
+
+**Publish and host**
+- One-click publish to `sites.shofar.io/<slug>/`, served from R2 by the API Worker, with thank-you pages, `robots.txt`, `sitemap.xml`, canonical and Open Graph tags
+- Custom domains through Cloudflare for SaaS (main domain plus redirect domains) with automatic certificates
+- Self-host route: ZIP export plus a guided Cloudflare Drop flow; the exported form still delivers through the platform
+
+**Contact form and inbox**
+- A localized contact form on every language page; messages are stored and shown in a Messages inbox with delivery status and reply
+- Delivery by email through Cloudflare Email Sending or Resend (pluggable; store-only until one is configured)
+- Honeypot, validation, per-visitor and per-site rate limits; the address is never printed on the page unless the owner chooses to
+
+**Operate**
+- Staff automation (`X-Staff-Token`) for build-for-them sites and hand-over to a customer by email
+- In-app guides for the AI copilot, publishing and custom domains
+- Security headers on the app, API and hosted sites; per-user and per-site limits; full site deletion
 
 ## Try it in two minutes
 
@@ -56,12 +78,11 @@ pnpm --filter @ministry/web dev
 
 Open http://localhost:5173. With no keys configured the editor runs in local mode: your site is saved in the browser and you can export a ZIP right away.
 
-### With sign-in and the API
+### With sign-in, AI and the API
 
-1. Create a free Clerk application and copy its publishable and secret keys.
-2. `apps/web/.env`: set `VITE_CLERK_PUBLISHABLE_KEY` and `VITE_API_URL=http://localhost:8787`.
-3. `apps/api/.dev.vars`: set `CLERK_SECRET_KEY`.
-4. Run the API with a local database and bucket (no Cloudflare account needed yet):
+1. Create a Clerk application and copy its keys: publishable key into `apps/web/.env` as `VITE_CLERK_PUBLISHABLE_KEY`, secret key into `apps/api/.dev.vars` as `CLERK_SECRET_KEY`.
+2. Optionally add `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) to `apps/api/.dev.vars` for the copilot.
+3. Run the API with a local database and bucket (no Cloudflare account needed yet):
 
 ```bash
 pnpm --filter @ministry/api db:migrate:local
@@ -77,37 +98,47 @@ Both `.env` and `.dev.vars` are gitignored; the `.example` files next to them li
 
 Everything runs on Cloudflare's free plan.
 
-1. `wrangler d1 create ministry-sites` and paste the id into `apps/api/wrangler.jsonc`.
-2. `wrangler r2 bucket create ministry-images`.
-3. `wrangler secret put CLERK_SECRET_KEY` inside `apps/api`, then `pnpm --filter @ministry/api deploy`.
-4. Build the web app with `pnpm --filter @ministry/web build` and deploy `apps/web/dist` as a Worker with static assets, or drop the folder on Cloudflare Drop.
-5. Set `ALLOWED_ORIGIN` in `wrangler.jsonc` to your web app's URL.
+1. `wrangler d1 create ministry-sites` and paste the id into `apps/api/wrangler.jsonc`; create the buckets with `wrangler r2 bucket create ministry-images` and `wrangler r2 bucket create ministry-published`.
+2. Apply migrations: `wrangler d1 migrations apply ministry-sites --remote` inside `apps/api`.
+3. Secrets on the API Worker with `wrangler secret put`: `CLERK_SECRET_KEY`, and optionally `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `STAFF_API_TOKEN`, `CLOUDFLARE_API_TOKEN` (custom domains).
+4. Set your hostnames in both `wrangler.jsonc` files (`routes` with `custom_domain: true`), `ALLOWED_ORIGIN`, `PUBLIC_SITES_HOST`, and build the web app with `VITE_CLERK_PUBLISHABLE_KEY` and `VITE_API_URL` in `apps/web/.env.production`.
+5. `pnpm --filter @ministry/api deploy` and `pnpm --filter @ministry/web deploy`.
 
-See [apps/api/README.md](apps/api/README.md) for the details.
+[apps/api/README.md](apps/api/README.md) covers every variable and secret, email providers, and the one-time Cloudflare for SaaS setup for custom domains.
 
 ## How it is built
 
 | Path | What |
 |---|---|
-| `packages/schema` | The Zod `SiteDocument` contract shared by the editor, the AI adapter, and the templates |
-| `packages/templates` | React templates rendered to static HTML with inline CSS |
-| `apps/web` | Vite + React 19, Tailwind v4, shadcn/ui, dnd-kit, motion, Clerk |
-| `apps/api` | Hono on Cloudflare Workers, Drizzle + D1, R2, Clerk JWT verification |
+| `packages/schema` | The Zod `SiteDocument` contract (sections, theme, languages, translation overlays) and the AI request/response types |
+| `packages/templates` | React templates rendered to static HTML with inline CSS; shared contact form, language switcher, thank-you page, SEO head |
+| `apps/web` | Vite + React 19, Tailwind v4, shadcn/ui, dnd-kit, motion, Clerk; editor, AI UI, inbox, guides |
+| `apps/api` | Hono on Cloudflare Workers: Clerk JWT auth, Drizzle + D1, R2, AI provider adapter, publishing and hosting, contact form, email senders |
 
-The site document is the heart of the system. The editor edits it, templates render it, and the upcoming AI copilot produces it through structured output, so nothing downstream ever sees malformed data.
+The site document is the heart of the system. The editor edits it, the AI produces it through structured output, templates render it, and publishing writes one static page per language.
 
 ```bash
 pnpm typecheck && pnpm test && pnpm build
 ```
 
+## Costs
+
+| Piece | Plan | Cost |
+|---|---|---|
+| Workers, D1, R2, KV | Cloudflare free | $0 (100k requests/day shared by the API and hosted sites; Workers Paid at $5/month removes the cap) |
+| Clerk | free tier | $0 |
+| Custom domains | Cloudflare for SaaS | first 100 hostnames free |
+| Email delivery | Resend free tier or Cloudflare Email Sending (Workers Paid) | $0 or $5/month |
+| AI | OpenAI or Anthropic, per token | about $0.01 to $0.05 per site drafted, cents per edit |
+
 ## Roadmap
 
-- **Phase 1, AI copilot.** Draft from notes, two or three design variations, per-field rewrites, alt text and SEO, bilingual output.
-- **Phase 2, hosted tier.** For organizations that want it handled: hosting on our Cloudflare account, custom domains with SSL, forms that deliver, analytics, at a price a small non-profit can afford.
-- **Phase 3, one-click publish.** Cloudflare's temporary-account flow so publishing is one click and a sign-up, no ZIP.
-- **Then:** more templates, a done-for-you option, sponsored sites for the smallest ministries.
+- Billing for the hosted tier (Stripe), sponsored sites, done-for-you flow
+- One-click claim into the customer's own Cloudflare account (Temporary Accounts API)
+- More templates and section types; ZIP export of every language
+- Enrichment sources for the copilot (non-profit registries, licensed stock photos)
 
-The full plan and the market research behind it are in [docs/PROPOSAL.md](docs/PROPOSAL.md) and [docs/COMPETITORS.md](docs/COMPETITORS.md).
+Plan and market research: [docs/PROPOSAL.md](docs/PROPOSAL.md), [docs/COMPETITORS.md](docs/COMPETITORS.md).
 
 ## Contributing
 

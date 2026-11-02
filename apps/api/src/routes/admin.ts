@@ -5,6 +5,7 @@ import { createMiddleware } from "hono/factory";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { organizations, sites, users } from "../db/schema";
+import { errorFields, logError, requestIdOf } from "../log";
 import { publishedUrlFor } from "../published";
 import type { AppEnv } from "../types";
 
@@ -78,7 +79,8 @@ adminRoutes.post(
     try {
       ownerUserId = await findClerkUserId(c.env.CLERK_SECRET_KEY, email);
     } catch (err) {
-      console.error("Clerk user lookup failed", err);
+      // The lookup URL carries the email being searched, so only the error class and a scrubbed message are logged.
+      logError("clerk_lookup_failed", requestIdOf(c), errorFields(err));
       return c.json({ error: "Could not look up the user in Clerk" }, 502);
     }
     if (!ownerUserId) return c.json({ error: "No user with that email" }, 404);

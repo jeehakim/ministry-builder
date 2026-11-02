@@ -13,6 +13,11 @@ export interface RenderOptions {
   formAction?: string;
   /** Set by renderSite from the document; templates read it for fixed UI strings. */
   language?: string;
+  /**
+   * Absolute URL of the page being rendered (e.g. https://sites.shofar.io/slug/en/). Enables the
+   * canonical link, Open Graph tags, absolute hreflang alternates and Organization structured data.
+   */
+  canonicalUrl?: string;
   /** Language switcher entries (current one marked). Omitted or empty = no switcher. */
   languageLinks?: LanguageLink[];
 }

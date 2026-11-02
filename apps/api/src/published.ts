@@ -1,3 +1,4 @@
+import type { SiteDocument } from "@ministry/schema";
 import type { Bindings } from "./types";
 
 /** Public URL of a published site, or null when it is not live. */
@@ -30,6 +31,44 @@ export const LANGUAGE_PATH_PATTERN = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/;
 /** The page of a non-primary language. Callers must check `LANGUAGE_PATH_PATTERN` first. */
 export function publishedLanguageIndexKey(siteId: string, lang: string): string {
   return `${publishedPrefix(siteId)}${lang}/index.html`;
+}
+
+/** robots.txt of a published site, generated at publish time. */
+export function publishedRobotsKey(siteId: string): string {
+  return `${publishedPrefix(siteId)}robots.txt`;
+}
+
+/** sitemap.xml of a published site, generated at publish time. */
+export function publishedSitemapKey(siteId: string): string {
+  return `${publishedPrefix(siteId)}sitemap.xml`;
+}
+
+/** Absolute public URL of a site's primary page on the sites host, with a trailing slash. */
+export function publicSiteUrl(env: Pick<Bindings, "PUBLIC_SITES_HOST">, slug: string): string {
+  return `https://${env.PUBLIC_SITES_HOST}/${slug}/`;
+}
+
+/** An https origin as a CSP source: no path, no credentials, lowercase host. */
+const HTTPS_ORIGIN = /^https:\/\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{1,5})?$/;
+
+/** The https origins the contact forms of a document post to, other than the site itself (custom `formEndpoint`s). */
+export function externalFormOrigins(doc: SiteDocument): string[] {
+  const origins = new Set<string>();
+  for (const section of doc.sections) {
+    if (section.type !== "contact" || !section.formEndpoint) continue;
+    try {
+      const { protocol, origin } = new URL(section.formEndpoint);
+      if (protocol === "https:" && HTTPS_ORIGIN.test(origin)) origins.add(origin);
+    } catch {
+      // A relative or malformed endpoint posts to the site itself, which 'self' already covers.
+    }
+  }
+  return [...origins];
+}
+
+/** Reads origins back from page metadata, accepting only well-formed https origins so a header can never be injected. */
+export function parseFormOrigins(value: string | undefined): string[] {
+  return (value ?? "").split(" ").filter((origin) => HTTPS_ORIGIN.test(origin));
 }
 
 /** The page shown after a contact form submission, in the primary language. */
