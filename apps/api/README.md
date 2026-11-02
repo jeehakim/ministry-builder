@@ -53,6 +53,10 @@ Set `vars.ALLOWED_ORIGIN` to `https://build.shofar.io` for production and uncomm
 | `POST /sites/:id/ai/translate` | owner or admin | `AiTranslateRequest` -> `{ language, overlay }`; 400 for the primary language; saves the overlay into `translations[language]`, adds the language to `meta.languages` and moves the current version |
 | `POST /sites/:id/publish` | owner or admin | Renders the current version into the `PUBLISHED` bucket; returns `{ url, publishedAt }` |
 | `POST /sites/:id/unpublish` | owner or admin | Removes the published objects; site returns to `draft` |
+| `GET /sites/:id/domains` | owner or admin | `{ domains, cnameTarget, enabled }`; each domain has `hostname`, `kind`, `sslStatus`, `verifiedAt`, `active` and the `dns` record to create |
+| `POST /sites/:id/domains` | owner or admin | `{ hostname, kind?: "primary" \| "redirect" }`; creates a Cloudflare for SaaS custom hostname and returns `{ domain }` (201). 400 bad hostname, 409 taken or second primary, 502 Cloudflare error, 503 not configured |
+| `POST /sites/:id/domains/:domainId/refresh` | owner or admin | Re-reads verification and certificate status from Cloudflare; returns `{ domain }` |
+| `DELETE /sites/:id/domains/:domainId` | owner or admin | Removes the custom hostname at Cloudflare, then the row |
 | `GET /sites/:id/messages?limit=50` | owner or admin | `{ messages: [{ id, name, email, message, language, createdAt, deliveredAt, deliveryError }] }`, newest first (limit 1-200) |
 | `DELETE /sites/:id/messages/:msgId` | owner or admin | Removes one stored message |
 | `GET /admin/sites` | admin | Every site with org name, owner, status and published URL |
@@ -60,7 +64,7 @@ Set `vars.ALLOWED_ORIGIN` to `https://build.shofar.io` for production and uncomm
 
 AI routes answer 429 `{ error, used, limit, resetsAt }` over quota, 503 when no provider is configured, 502 on provider failure.
 
-Published sites are served by this Worker on `PUBLIC_SITES_HOST` (`sites.shofar.io/<slug>/`, or `<slug>.sites.shofar.io/`) before CORS and auth run, from the `PUBLISHED` bucket only.
+Published sites are served by this Worker before CORS and auth run, from the `PUBLISHED` bucket only. A request host is resolved in this order: a customer domain from the `domains` table (a `primary` domain serves the site at `/`, its language pages at `/<lang>/`, the thank-you pages at `/thanks/` and `/<lang>/thanks/`, and takes contact-form posts at `/contact`; a `redirect` domain answers 301 to the primary), then `PUBLIC_SITES_HOST` (`sites.shofar.io/<slug>/`) and its subdomain form (`<slug>.sites.shofar.io/`). `PUBLIC_API_HOST` is never looked up as a customer domain. Published pages contain only document-relative links (`relativizeRootLinks` in `src/published.ts` enforces it), so the same `index.html` works at `/` and at `/<slug>/`.
 
 ### Contact form
 
@@ -97,7 +101,26 @@ Errors are `{ "error": string }`. A site you may not access answers 404, same as
 | `ANTHROPIC_API_KEY` | same, name `ANTHROPIC_API_KEY` | AI copilot on Claude (key from console.anthropic.com; a Claude.ai subscription does not work). Model comes from the `ANTHROPIC_MODEL` var (default `claude-opus-5-5`; set `claude-sonnet-5-5` or `claude-haiku-5-5` to spend less) |
 | `RESEND_API_KEY` | same, name `RESEND_API_KEY` | Optional. Contact-form notification emails when `EMAIL_PROVIDER` is `resend` |
 | `STAFF_API_TOKEN` | same, name `STAFF_API_TOKEN` | Optional. Requests with header `X-Staff-Token: <value>` act as the admin user `staff-bot` |
+| `CLOUDFLARE_API_TOKEN` | same, name `CLOUDFLARE_API_TOKEN` | Optional. Custom domains (see below). Without it, or without the `CLOUDFLARE_ZONE_ID` var, the domain routes answer 503 and the editor hides the add form |
 
 Without either AI key the AI routes answer 503. When only one key is set it is used; when both are set OpenAI wins unless the `AI_PROVIDER` var is `anthropic` (or `openai`). Setting `AI_PROVIDER` to a provider whose key is missing disables the copilot rather than falling back. Both adapters live in `src/ai/` behind the same `AiProvider` interface; the Anthropic one uses structured outputs (`output_config.format`) so the JSON matches the schema's shape, and both validate with Zod and allow one repair round.
 
 `GET /health` returns `{ "ok": true, "ai": true|false }` (true when either AI key is present) so you can confirm a key is set without exposing it. Secrets added in the dashboard survive `wrangler deploy`; plain-text variables defined in `wrangler.jsonc` are the source of truth for non-secret settings.
+## Custom domains (Cloudflare for SaaS)
+
+A customer's domain (for example `bridgeworldfoundation.org`) becomes a **custom hostname** on the `shofar.io` zone. Cloudflare issues the certificate, terminates TLS and hands the request to this Worker, which looks the host up in the `domains` table. The first 100 custom hostnames on the zone are free. One-time setup on the owner's Cloudflare account, all in the `shofar.io` zone:
+
+1. **Enable Cloudflare for SaaS**: zone > SSL/TLS > Custom Hostnames > Enable.
+2. **Fallback origin**: create a proxied DNS record for an "originless" hostname, e.g. `AAAA  sites-origin  100::` (proxied, orange cloud), then on the Custom Hostnames page enter `sites-origin.shofar.io` under *Fallback Origin* and add it. Wait for its status to show *Active*. Custom hostname traffic is routed to this record; the Worker route below is what actually answers it.
+3. **Worker route** so the Worker runs for requests that arrive on customer hostnames (a Workers custom domain only covers its own hostname): zone > Workers Routes > Add route, pattern `*/*`, Worker `ministry-api`. Cloudflare's guidance for Workers as a SaaS origin is this catch-all plus exclusions: add routes `build.shofar.io/*` with Worker *None* and any other hostname on the zone that must not pass through the API Worker. Re-check `https://build.shofar.io` after saving. (The alternative is one route per customer hostname, e.g. `bridgeworldfoundation.org/*`; the API does not create those.)
+4. **CNAME target**: customers point their domain at `CUSTOM_HOSTNAME_CNAME_TARGET` (`sites.shofar.io` by default, which is already a proxied record on the zone). Any proxied hostname on the zone works; change the var if you want a dedicated one such as `customers.shofar.io`.
+5. **API token**: My Profile > API Tokens > Create Token > Custom token with permission **Zone > SSL and Certificates > Edit**, zone resource *Include > Specific zone > shofar.io*. Store it as the `CLOUDFLARE_API_TOKEN` secret (`npx wrangler secret put CLOUDFLARE_API_TOKEN`). Wrangler's OAuth login does not cover DNS or SSL, so this token is needed even when deploys work.
+6. **Zone id**: zone Overview page, right column, *Zone ID*. Paste it into `vars.CLOUDFLARE_ZONE_ID` in `wrangler.jsonc`.
+
+What the customer does: create `CNAME <their hostname> -> sites.shofar.io` at their DNS provider (the editor shows this). For a root domain (`example.org` rather than `www.example.org`) the provider must support CNAME at the apex (Cloudflare DNS does; otherwise ALIAS/ANAME), because an A record to our IPs is not a supported setup without apex proxying. Once the CNAME resolves, Cloudflare verifies the hostname and issues the certificate over HTTP validation with no further action; *Check status* in the editor (`POST .../refresh`) pulls the result. A domain is live when both the hostname status and `ssl.status` are `active`.
+
+Bridge World Foundation: add `bridgeworldfoundation.org` as the main domain and `bridgeworld.foundation` (and `www.` forms) as redirects; redirects answer 301 to the main domain with the path preserved.
+
+### Subdomain form (`<slug>.sites.shofar.io`)
+
+The hosting handler already serves `<slug>.sites.shofar.io/`, but nothing routes there yet. On the `shofar.io` zone add a proxied wildcard record `CNAME  *.sites  sites.shofar.io` and a Workers route `*.sites.shofar.io/*` -> `ministry-api` (unnecessary if the `*/*` route above exists). Universal SSL covers `shofar.io` and `*.shofar.io` only; a second-level wildcard like `*.sites.shofar.io` needs an Advanced Certificate (ACM, about $10/month) or Total TLS. Until one is bought, keep linking to the path form, which `PUBLIC_SITES_HOST` already produces.

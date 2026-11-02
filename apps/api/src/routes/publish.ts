@@ -18,6 +18,7 @@ import {
   publishedPrefix,
   publishedThanksKey,
   publishedUrlFor,
+  relativizeRootLinks,
 } from "../published";
 import type { AppEnv } from "../types";
 
@@ -108,8 +109,8 @@ publishRoutes.post("/sites/:id/publish", async (c) => {
       // Lets the hosting handler answer with Content-Language without reading the page.
       ...(LANGUAGE_TAG_PATTERN.test(page.lang) ? { customMetadata: { language: page.lang } } : {}),
     };
-    await c.env.PUBLISHED.put(page.key, page.html, options);
-    await c.env.PUBLISHED.put(page.thanksKey, page.thanksHtml, options);
+    await c.env.PUBLISHED.put(page.key, relativizeRootLinks(page.html), options);
+    await c.env.PUBLISHED.put(page.thanksKey, relativizeRootLinks(page.thanksHtml), options);
   }
 
   // Stale images, and language pages of languages that are no longer in the document.

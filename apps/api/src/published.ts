@@ -5,6 +5,16 @@ export function publishedUrlFor(env: Pick<Bindings, "PUBLIC_SITES_HOST">, publis
   return publishedPath ? `https://${env.PUBLIC_SITES_HOST}${publishedPath}` : null;
 }
 
+/**
+ * Makes root-relative `href`/`src` attributes document-relative ("/images/a.png" -> "images/a.png").
+ * A published page is served both at "/" (customer domain, subdomain form) and at "/<slug>/" (host form),
+ * so only document-relative links work everywhere. Templates already emit relative links; this guards
+ * authored content and future templates. Protocol-relative URLs ("//cdn...") are left alone.
+ */
+export function relativizeRootLinks(html: string): string {
+  return html.replace(/\b(href|src)=(["'])\/(?!\/)/g, "$1=$2");
+}
+
 /** Every object of a published site lives under this prefix in the PUBLISHED bucket. */
 export function publishedPrefix(siteId: string): string {
   return `published/${siteId}/`;

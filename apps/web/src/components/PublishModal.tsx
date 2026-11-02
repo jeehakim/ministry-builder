@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { CustomDomainPanel } from "./CustomDomainPanel";
 
 const STEPS = [
   { title: "Download your site", body: "One ZIP with your page and images. Nothing else is needed." },
@@ -294,6 +295,12 @@ export function PublishModal(props: {
         {canHost ? (
           <>
             <HostedPublish site={site} doc={doc} onSiteChange={onSiteChange} beforePublish={beforePublish} />
+            <Separator />
+          </>
+        ) : null}
+        {backend.domains ? (
+          <>
+            <CustomDomainPanel domains={backend.domains} published={safeHttpUrl(site.publishedUrl) !== null} />
             <Separator />
           </>
         ) : null}

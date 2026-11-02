@@ -5,6 +5,7 @@ import { serveSites } from "./hosting";
 import { adminRoutes } from "./routes/admin";
 import { aiRoutes } from "./routes/ai";
 import { assetRoutes } from "./routes/assets";
+import { domainRoutes } from "./routes/domains";
 import { messageRoutes } from "./routes/messages";
 import { publishRoutes } from "./routes/publish";
 import { siteRoutes } from "./routes/sites";
@@ -41,6 +42,7 @@ app.route("/", siteRoutes);
 app.route("/", assetRoutes);
 app.route("/", aiRoutes);
 app.route("/", publishRoutes);
+app.route("/", domainRoutes);
 app.route("/", messageRoutes);
 app.route("/", adminRoutes);
 

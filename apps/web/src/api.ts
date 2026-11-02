@@ -49,6 +49,30 @@ export interface PublishResult {
   publishedAt: string;
 }
 
+export type DomainKind = "primary" | "redirect";
+
+/** A customer domain attached to a site, as `GET /sites/:id/domains` reports it. */
+export interface SiteDomain {
+  id: string;
+  hostname: string;
+  kind: DomainKind;
+  /** Cloudflare's certificate status: "pending_validation", "pending_issuance", "active", ... */
+  sslStatus: string;
+  verifiedAt: string | null;
+  /** True once the domain is verified and its certificate is live: it serves the site. */
+  active: boolean;
+  /** The DNS record the customer must create at their registrar. */
+  dns: { type: string; name: string; target: string };
+  createdAt: string;
+}
+
+export interface DomainList {
+  domains: SiteDomain[];
+  cnameTarget: string;
+  /** False when the server has no Cloudflare credentials: adding domains answers 503. */
+  enabled: boolean;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
@@ -90,6 +114,10 @@ export interface ApiClient {
   uploadAsset(siteId: string, file: Blob, fileName: string): Promise<UploadedAsset>;
   publish(id: string): Promise<PublishResult>;
   unpublish(id: string): Promise<void>;
+  listDomains(siteId: string): Promise<DomainList>;
+  addDomain(siteId: string, hostname: string, kind: DomainKind): Promise<SiteDomain>;
+  refreshDomain(siteId: string, domainId: string): Promise<SiteDomain>;
+  removeDomain(siteId: string, domainId: string): Promise<void>;
   listMessages(siteId: string): Promise<ContactMessage[]>;
   deleteMessage(siteId: string, id: string): Promise<void>;
   aiUsage(): Promise<AiUsageResponse>;
@@ -231,6 +259,19 @@ export function createApiClient(getToken: GetToken, baseUrl: string = API_URL): 
     },
     async unpublish(id) {
       await request<unknown>(`${sitePath(id)}/unpublish`, json("POST"), JSON_TIMEOUT_MS);
+    },
+    listDomains(siteId) {
+      return request<DomainList>(`${sitePath(siteId)}/domains`, json("GET"), JSON_TIMEOUT_MS);
+    },
+    async addDomain(siteId, hostname, kind) {
+      return (await request<{ domain: SiteDomain }>(`${sitePath(siteId)}/domains`, json("POST", { hostname, kind }), JSON_TIMEOUT_MS)).domain;
+    },
+    async refreshDomain(siteId, domainId) {
+      const path = `${sitePath(siteId)}/domains/${encodeURIComponent(domainId)}/refresh`;
+      return (await request<{ domain: SiteDomain }>(path, json("POST"), JSON_TIMEOUT_MS)).domain;
+    },
+    async removeDomain(siteId, domainId) {
+      await request<unknown>(`${sitePath(siteId)}/domains/${encodeURIComponent(domainId)}`, json("DELETE"), JSON_TIMEOUT_MS);
     },
     async listMessages(siteId) {
       const data = await request<unknown>(`${sitePath(siteId)}/messages?limit=${MESSAGES_LIMIT}`, json("GET"), JSON_TIMEOUT_MS);

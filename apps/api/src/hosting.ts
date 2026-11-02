@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
+import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
 import {
   LANGUAGE_PATH_PATTERN,
@@ -11,7 +12,7 @@ import {
   publishedThanksKey,
 } from "./published";
 import { handleContactSubmission } from "./contact";
-import { sites } from "./db/schema";
+import { domains, sites } from "./db/schema";
 import { SLUG_PATTERN } from "./routes/sites";
 import type { AppEnv } from "./types";
 
@@ -54,28 +55,140 @@ function isSitesHost(hostname: string, sitesHost: string): boolean {
   return hostname === sitesHost || hostname.endsWith(`.${sitesHost}`);
 }
 
+function methodNotAllowed(): Response {
+  return new Response("Method not allowed", {
+    status: 405,
+    headers: { Allow: "GET, HEAD", "X-Content-Type-Options": "nosniff" },
+  });
+}
+
+/**
+ * Streams one object of a published site: its index at "/", a language page at "/<lang>/", a thank-you
+ * page at "/thanks/" or "/<lang>/thanks/", or an image under "/images/". `base` is the URL prefix of the
+ * site root ("" or "/<slug>"), used for the redirects that add a trailing slash.
+ */
+async function serveSiteFile(c: Context<AppEnv>, siteId: string, base: string, rest: string, search: string): Promise<Response> {
+  let key: string;
+  let cacheControl: string;
+  let isPage = false;
+  let pageLanguage: string | undefined;
+  const languageMatch = /^\/([^/]+)(\/)?$/.exec(rest);
+  const lang = languageMatch?.[1];
+  const thanksMatch = /^(?:\/([^/]+))?\/thanks(\/)?$/.exec(rest);
+  const thanksLang = thanksMatch?.[1];
+  if (thanksMatch && (thanksLang === undefined || LANGUAGE_PATH_PATTERN.test(thanksLang))) {
+    key = thanksLang === undefined ? publishedThanksKey(siteId) : publishedLanguageThanksKey(siteId, thanksLang);
+    // The thank-you page is only ever reached through a form post; it must not be cached or indexed.
+    cacheControl = "no-store";
+    isPage = true;
+    pageLanguage = thanksLang;
+    if (thanksMatch[2] === undefined) {
+      if (!(await c.env.PUBLISHED.head(key))) return notFoundPage();
+      return redirect(301, `${base}${thanksLang === undefined ? "" : `/${thanksLang}`}/thanks/${search}`);
+    }
+  } else if (rest === "/") {
+    key = publishedIndexKey(siteId);
+    cacheControl = "public, max-age=60";
+    isPage = true;
+  } else if (lang !== undefined && LANGUAGE_PATH_PATTERN.test(lang)) {
+    key = publishedLanguageIndexKey(siteId, lang);
+    cacheControl = "public, max-age=60";
+    isPage = true;
+    pageLanguage = lang;
+    if (languageMatch?.[2] === undefined) {
+      // Only redirect to pages that exist, so unknown languages stay a plain 404.
+      if (!(await c.env.PUBLISHED.head(key))) return notFoundPage();
+      return redirect(301, `${base}/${lang}/${search}`);
+    }
+  } else if (rest.startsWith("/images/") && IMAGE_FILE_PATTERN.test(rest.slice("/images/".length))) {
+    key = `${publishedImagePrefix(siteId)}${rest.slice("/images/".length)}`;
+    cacheControl = "public, max-age=31536000, immutable";
+  } else {
+    return notFoundPage();
+  }
+
+  const object = await c.env.PUBLISHED.get(key, { onlyIf: c.req.raw.headers });
+  if (!object) return notFoundPage();
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  if (isPage) {
+    headers.set("Content-Type", "text/html; charset=utf-8");
+    const contentLanguage = pageLanguage ?? object.customMetadata?.language;
+    if (contentLanguage && LANGUAGE_TAG_PATTERN.test(contentLanguage)) headers.set("Content-Language", contentLanguage);
+  }
+  headers.set("ETag", object.httpEtag);
+  headers.set("Cache-Control", cacheControl);
+  headers.set("X-Content-Type-Options", "nosniff");
+
+  // With `onlyIf`, R2 returns an object without a body when the precondition (If-None-Match) fails.
+  if (!("body" in object)) return new Response(null, { status: 304, headers });
+  return new Response(object.body, { headers });
+}
+
+/**
+ * A customer domain attached through Cloudflare for SaaS. The primary domain serves the site at "/";
+ * a redirect domain answers 301 to the primary (or to the site's sites-host address when there is none).
+ */
+async function serveCustomDomain(c: Context<AppEnv>, url: URL, hostname: string): Promise<Response | null> {
+  const db = drizzle(c.env.DB);
+  const [match] = await db
+    .select({ siteId: domains.siteId, kind: domains.kind, slug: sites.slug, status: sites.status })
+    .from(domains)
+    .innerJoin(sites, eq(domains.siteId, sites.id))
+    .where(eq(domains.hostname, hostname))
+    .limit(1);
+  if (!match) return null;
+
+  if (url.pathname === "/contact") {
+    if (match.kind === "redirect") return redirect(301, await primaryLocation(c, match, url));
+    // Submissions are accepted for any site with a contact address, published or not.
+    return handleContactSubmission(c.req.raw, c.env, match.slug, "");
+  }
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") return methodNotAllowed();
+  if (match.status !== "published") return notFoundPage();
+
+  if (match.kind === "redirect") return redirect(301, await primaryLocation(c, match, url));
+  return serveSiteFile(c, match.siteId, "", url.pathname, url.search);
+}
+
+/** Where a redirect domain sends a request: the primary domain with the path kept, or the site's sites-host address. */
+async function primaryLocation(c: Context<AppEnv>, site: { siteId: string; slug: string }, url: URL): Promise<string> {
+  const [primary] = await drizzle(c.env.DB)
+    .select({ hostname: domains.hostname })
+    .from(domains)
+    .where(and(eq(domains.siteId, site.siteId), eq(domains.kind, "primary")))
+    .limit(1);
+  return primary ? `https://${primary.hostname}${url.pathname}${url.search}` : `https://${c.env.PUBLIC_SITES_HOST}/${site.slug}/`;
+}
+
 /**
  * Serves published sites from the PUBLISHED bucket (never from IMAGES). Runs before CORS and
- * auth: requests for the sites host never reach the API routes.
+ * auth: requests for the sites host and for customer domains never reach the API routes.
  *
- * Host form:      sites.shofar.io/<slug>/, /<slug>/<lang>/, /<slug>/thanks/, /<slug>/<lang>/thanks/ and /<slug>/images/<file>
- * Subdomain form: <slug>.sites.shofar.io/, /<lang>/, /thanks/, /<lang>/thanks/ and /images/<file>
+ * Customer domain: bridgeworldfoundation.org/, /<lang>/, /thanks/, /<lang>/thanks/ and /images/<file>
+ * Host form:       sites.shofar.io/<slug>/, /<slug>/<lang>/, /<slug>/thanks/, /<slug>/<lang>/thanks/ and /<slug>/images/<file>
+ * Subdomain form:  <slug>.sites.shofar.io/, /<lang>/, /thanks/, /<lang>/thanks/ and /images/<file>
  *
- * The one write: POST /<slug>/contact (subdomain form: POST /contact) takes contact-form submissions.
+ * The one write: POST /<slug>/contact (custom domain and subdomain form: POST /contact) takes
+ * contact-form submissions.
  */
 export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
   const sitesHost = c.env.PUBLIC_SITES_HOST?.toLowerCase();
   const url = new URL(c.req.url);
   const hostname = url.hostname.toLowerCase();
-  if (!sitesHost || !isSitesHost(hostname, sitesHost)) return next();
+
+  if (!sitesHost || !isSitesHost(hostname, sitesHost)) {
+    // Anything that is not the API itself may be a customer domain; one indexed D1 read decides.
+    if (hostname !== c.env.PUBLIC_API_HOST?.toLowerCase()) {
+      const response = await serveCustomDomain(c, url, hostname);
+      if (response) return response;
+    }
+    return next();
+  }
 
   const isContactPath = hostname === sitesHost ? /^\/[^/]+\/contact$/.test(url.pathname) : url.pathname === "/contact";
-  if (!isContactPath && c.req.method !== "GET" && c.req.method !== "HEAD") {
-    return new Response("Method not allowed", {
-      status: 405,
-      headers: { Allow: "GET, HEAD", "X-Content-Type-Options": "nosniff" },
-    });
-  }
+  if (!isContactPath && c.req.method !== "GET" && c.req.method !== "HEAD") return methodNotAllowed();
 
   let slug: string;
   let base: string; // URL prefix of the site root, without a trailing slash
@@ -104,61 +217,5 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
     .where(and(eq(sites.slug, slug), eq(sites.status, "published")))
     .limit(1);
   if (!site) return notFoundPage();
-
-  let key: string;
-  let cacheControl: string;
-  let isPage = false;
-  let pageLanguage: string | undefined;
-  const languageMatch = /^\/([^/]+)(\/)?$/.exec(rest);
-  const lang = languageMatch?.[1];
-  const thanksMatch = /^(?:\/([^/]+))?\/thanks(\/)?$/.exec(rest);
-  const thanksLang = thanksMatch?.[1];
-  if (thanksMatch && (thanksLang === undefined || LANGUAGE_PATH_PATTERN.test(thanksLang))) {
-    key = thanksLang === undefined ? publishedThanksKey(site.id) : publishedLanguageThanksKey(site.id, thanksLang);
-    // The thank-you page is only ever reached through a form post; it must not be cached or indexed.
-    cacheControl = "no-store";
-    isPage = true;
-    pageLanguage = thanksLang;
-    if (thanksMatch[2] === undefined) {
-      if (!(await c.env.PUBLISHED.head(key))) return notFoundPage();
-      return redirect(301, `${base}${thanksLang === undefined ? "" : `/${thanksLang}`}/thanks/${url.search}`);
-    }
-  } else if (rest === "/") {
-    key = publishedIndexKey(site.id);
-    cacheControl = "public, max-age=60";
-    isPage = true;
-  } else if (lang !== undefined && LANGUAGE_PATH_PATTERN.test(lang)) {
-    key = publishedLanguageIndexKey(site.id, lang);
-    cacheControl = "public, max-age=60";
-    isPage = true;
-    pageLanguage = lang;
-    if (languageMatch?.[2] === undefined) {
-      // Only redirect to pages that exist, so unknown languages stay a plain 404.
-      if (!(await c.env.PUBLISHED.head(key))) return notFoundPage();
-      return redirect(301, `${base}/${lang}/${url.search}`);
-    }
-  } else if (rest.startsWith("/images/") && IMAGE_FILE_PATTERN.test(rest.slice("/images/".length))) {
-    key = `${publishedImagePrefix(site.id)}${rest.slice("/images/".length)}`;
-    cacheControl = "public, max-age=31536000, immutable";
-  } else {
-    return notFoundPage();
-  }
-
-  const object = await c.env.PUBLISHED.get(key, { onlyIf: c.req.raw.headers });
-  if (!object) return notFoundPage();
-
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  if (isPage) {
-    headers.set("Content-Type", "text/html; charset=utf-8");
-    const contentLanguage = pageLanguage ?? object.customMetadata?.language;
-    if (contentLanguage && LANGUAGE_TAG_PATTERN.test(contentLanguage)) headers.set("Content-Language", contentLanguage);
-  }
-  headers.set("ETag", object.httpEtag);
-  headers.set("Cache-Control", cacheControl);
-  headers.set("X-Content-Type-Options", "nosniff");
-
-  // With `onlyIf`, R2 returns an object without a body when the precondition (If-None-Match) fails.
-  if (!("body" in object)) return new Response(null, { status: 304, headers });
-  return new Response(object.body, { headers });
+  return serveSiteFile(c, site.id, base, rest, url.search);
 });

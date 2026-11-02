@@ -15,6 +15,10 @@ ANTHROPIC_API_KEY=
 # Shared token for staff automation. Send it as the X-Staff-Token header to act as the admin user "staff-bot".
 # Leave unset to disable staff access. Production value lives on the Worker as a secret.
 STAFF_API_TOKEN=
+# Cloudflare API token with "SSL and Certificates: Edit" on the shofar.io zone, for customer domains.
+# Leave unset to disable the domain routes (they answer 503). Production value lives on the Worker as a secret.
+CLOUDFLARE_API_TOKEN=
+# CLOUDFLARE_ZONE_ID=
 
 # Contact-form notification emails. wrangler.jsonc sets EMAIL_PROVIDER="none" (store messages only, no email).
 # Option 1, Cloudflare Email Sending: uncomment the send_email binding in wrangler.jsonc, then
