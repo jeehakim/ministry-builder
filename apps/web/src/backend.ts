@@ -22,6 +22,7 @@ import {
 } from "./api";
 import { API_URL } from "./env";
 import { slugify } from "./lib/files";
+import type { ContactMessage } from "./lib/messages";
 
 /** AI copilot calls. Only the API backend has them. */
 export interface AiBackend {
@@ -33,6 +34,12 @@ export interface AiBackend {
   altText(siteId: string, assetKey: string): Promise<AiAltTextResponse>;
   /** Translates the whole page into `language`. The server also saves the overlay as a new version. */
   translate(siteId: string, language: string): Promise<AiTranslateResponse>;
+}
+
+/** The contact form inbox. Only the API backend has it. */
+export interface MessagesBackend {
+  list(siteId: string): Promise<ContactMessage[]>;
+  remove(siteId: string, id: string): Promise<void>;
 }
 
 /**
@@ -51,6 +58,8 @@ export interface Backend {
   imageUrl(ref: ImageRef): string;
   /** Present in API mode only; local mode has no AI, so the UI hides it and says why. */
   ai?: AiBackend;
+  /** Present in API mode only; local mode has no hosted form, so no inbox. */
+  messages?: MessagesBackend;
   /** Publishes the saved document on Ministry Sites. API mode only. */
   publish?(siteId: string): Promise<PublishResult>;
   unpublish?(siteId: string): Promise<void>;
@@ -82,6 +91,10 @@ export function createApiBackend(getToken: GetToken): Backend {
       theme: (siteId, request) => api.aiTheme(siteId, request),
       altText: (siteId, assetKey) => api.aiAltText(siteId, assetKey),
       translate: (siteId, language) => api.aiTranslate(siteId, language),
+    },
+    messages: {
+      list: (siteId) => api.listMessages(siteId),
+      remove: (siteId, id) => api.deleteMessage(siteId, id),
     },
     publish: (siteId) => api.publish(siteId),
     unpublish: (siteId) => api.unpublish(siteId),
@@ -140,7 +153,7 @@ export function createLocalBackend(): Backend {
   }
 
   function loaded(document: SiteDocument): LoadedSite {
-    return { site: { id: LOCAL_SITE_ID, slug: slugify(document.meta.orgName), publishedUrl: null, publishedAt: null }, document };
+    return { site: { id: LOCAL_SITE_ID, slug: slugify(document.meta.orgName), publishedUrl: null, publishedAt: null, messageCount: 0 }, document };
   }
 
   return {

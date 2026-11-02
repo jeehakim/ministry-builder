@@ -5,6 +5,7 @@ import { serveSites } from "./hosting";
 import { adminRoutes } from "./routes/admin";
 import { aiRoutes } from "./routes/ai";
 import { assetRoutes } from "./routes/assets";
+import { messageRoutes } from "./routes/messages";
 import { publishRoutes } from "./routes/publish";
 import { siteRoutes } from "./routes/sites";
 import type { AppEnv } from "./types";
@@ -40,6 +41,7 @@ app.route("/", siteRoutes);
 app.route("/", assetRoutes);
 app.route("/", aiRoutes);
 app.route("/", publishRoutes);
+app.route("/", messageRoutes);
 app.route("/", adminRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));

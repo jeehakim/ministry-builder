@@ -22,6 +22,16 @@ export function publishedLanguageIndexKey(siteId: string, lang: string): string 
   return `${publishedPrefix(siteId)}${lang}/index.html`;
 }
 
+/** The page shown after a contact form submission, in the primary language. */
+export function publishedThanksKey(siteId: string): string {
+  return `${publishedPrefix(siteId)}thanks/index.html`;
+}
+
+/** The thank-you page of a non-primary language. Callers must check `LANGUAGE_PATH_PATTERN` first. */
+export function publishedLanguageThanksKey(siteId: string, lang: string): string {
+  return `${publishedPrefix(siteId)}${lang}/thanks/index.html`;
+}
+
 /** Safe to send as a Content-Language header value. */
 export const LANGUAGE_TAG_PATTERN = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 

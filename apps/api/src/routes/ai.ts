@@ -95,7 +95,22 @@ async function guard(c: Ctx): Promise<Guard | Response> {
   return { site, provider, orgName: org?.name ?? "Your organization" };
 }
 
-function usageRow(userId: string, siteId: string, action: AiAction, usage: AiCallUsage) {
+const AUDIT_MAX_CHARS = 4000;
+
+/** Serializes an audit value, truncated so a long brief cannot bloat the row. */
+function audit(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const json = typeof value === "string" ? value : JSON.stringify(value);
+  return json.length > AUDIT_MAX_CHARS ? `${json.slice(0, AUDIT_MAX_CHARS)}…` : json;
+}
+
+function usageRow(
+  userId: string,
+  siteId: string,
+  action: AiAction,
+  usage: AiCallUsage,
+  trail: { request?: unknown; result?: unknown } = {},
+) {
   return {
     id: newId("aiu"),
     userId,
@@ -105,6 +120,8 @@ function usageRow(userId: string, siteId: string, action: AiAction, usage: AiCal
     model: usage.model,
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
+    requestJson: audit(trail.request),
+    resultJson: audit(trail.result),
   };
 }
 
@@ -195,7 +212,12 @@ aiRoutes.post("/sites/:id/ai/draft", tooLarge, async (c) => {
   }
 
   // Tokens were spent whether or not the output was usable, so the call counts against the quota.
-  const usage = db.insert(aiUsage).values(usageRow(c.var.user.id, g.site.id, "draft", result.usage));
+  const usage = db.insert(aiUsage).values(
+    usageRow(c.var.user.id, g.site.id, "draft", result.usage, {
+      request: { notes: body.notes, language: body.language, variations: body.variations, styleNotes: body.styleNotes, referenceAssetKey: body.referenceAssetKey },
+      result: { variationGroupId, versionIds: variations.map((v) => v.versionId), labels: variations.map((v) => v.label) },
+    }),
+  );
   if (variations.length === 0) {
     await usage;
     return c.json({ error: "The AI returned drafts we could not use. Please try again." }, 502);
@@ -226,7 +248,9 @@ aiRoutes.post("/sites/:id/ai/rewrite", tooLarge, async (c) => {
   const result = await callProvider(c, "rewrite", () => g.provider.rewrite(body));
   if (result instanceof Response) return result;
 
-  await drizzle(c.env.DB).insert(aiUsage).values(usageRow(c.var.user.id, g.site.id, "rewrite", result.usage));
+  await drizzle(c.env.DB).insert(aiUsage).values(
+    usageRow(c.var.user.id, g.site.id, "rewrite", result.usage, { request: { instruction: body.instruction, context: body.context, text: body.text }, result: { text: result.text } }),
+  );
   const response: AiRewriteResponse = { text: result.text };
   return c.json(response);
 });
@@ -244,7 +268,9 @@ aiRoutes.post("/sites/:id/ai/theme", tooLarge, async (c) => {
   );
   if (result instanceof Response) return result;
 
-  await drizzle(c.env.DB).insert(aiUsage).values(usageRow(c.var.user.id, g.site.id, "theme", result.usage));
+  await drizzle(c.env.DB).insert(aiUsage).values(
+    usageRow(c.var.user.id, g.site.id, "theme", result.usage, { request: { description: body.description, referenceAssetKey: body.referenceAssetKey }, result: result }),
+  );
   const parsed = Theme.safeParse(result.theme);
   if (!parsed.success) {
     console.error("Invalid AI theme", describeIssues(parsed.error));
@@ -269,7 +295,9 @@ aiRoutes.post("/sites/:id/ai/alt-text", tooLarge, async (c) => {
   const result = await callProvider(c, "alt_text", () => g.provider.altText({ assetKey, orgName: g.orgName }));
   if (result instanceof Response) return result;
 
-  await drizzle(c.env.DB).insert(aiUsage).values(usageRow(c.var.user.id, g.site.id, "alt_text", result.usage));
+  await drizzle(c.env.DB).insert(aiUsage).values(
+    usageRow(c.var.user.id, g.site.id, "alt_text", result.usage, { request: { assetKey: body.assetKey }, result: { alt: result.alt } }),
+  );
   const response: AiAltTextResponse = { alt: result.alt };
   return c.json(response);
 });
@@ -307,7 +335,10 @@ aiRoutes.post("/sites/:id/ai/translate", tooLarge, async (c) => {
   if (result instanceof Response) return result;
 
   // Tokens were spent whether or not the output was usable, so the call counts against the quota.
-  const usage = db.insert(aiUsage).values(usageRow(c.var.user.id, g.site.id, "translate", result.usage));
+  const versionId = newId("ver");
+  const usage = db.insert(aiUsage).values(
+    usageRow(c.var.user.id, g.site.id, "translate", result.usage, { request: { language: body.language }, result: { versionId } }),
+  );
   const overlay = TranslationOverlay.safeParse(result.overlay);
   if (!overlay.success) {
     console.error("Invalid AI translation", describeIssues(overlay.error));
@@ -336,7 +367,6 @@ aiRoutes.post("/sites/:id/ai/translate", tooLarge, async (c) => {
     return c.json({ error: "The translation could not be added to this site." }, 502);
   }
 
-  const versionId = newId("ver");
   await db.batch([
     db.insert(siteVersions).values({
       id: versionId,

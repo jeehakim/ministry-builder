@@ -23,8 +23,16 @@
     // AI calls allowed per user per UTC day.
     "AI_DAILY_LIMIT": "30",
     // Hostname that serves published sites (path form: sites.shofar.io/<slug>/).
-    "PUBLIC_SITES_HOST": "sites.shofar.io"
+    "PUBLIC_SITES_HOST": "sites.shofar.io",
+    // Contact-form notification emails: "cloudflare" (send_email binding below), "resend" (RESEND_API_KEY secret)
+    // or "none" (store messages only; owners read them through GET /sites/:id/messages).
+    "EMAIL_PROVIDER": "none",
+    "EMAIL_FROM": "Ministry Sites <forms@shofar.io>"
   },
+
+  // Cloudflare Email Sending (needs a plan that includes it, and the sender domain onboarded under Email Sending).
+  // To use it: uncomment, set EMAIL_PROVIDER to "cloudflare", redeploy.
+  // "send_email": [{ "name": "EMAIL" }],
 
   "d1_databases": [
     {

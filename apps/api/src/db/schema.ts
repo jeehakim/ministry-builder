@@ -111,9 +111,42 @@ export const aiUsage = sqliteTable(
     model: text("model").notNull(),
     inputTokens: integer("input_tokens").notNull().default(0),
     outputTokens: integer("output_tokens").notNull().default(0),
+    /** User-supplied inputs (notes, instruction, language…) as JSON, truncated. Never the system prompt or secrets. */
+    requestJson: text("request_json"),
+    /** What the call produced: a version/group id, or the returned text/theme/alt as JSON, truncated. */
+    resultJson: text("result_json"),
     createdAt: createdAt(),
   },
   (t) => [index("ai_usage_user_id_created_at_idx").on(t.userId, t.createdAt)],
+);
+
+/**
+ * A contact-form message from a visitor of a published site. Stored before any email is attempted,
+ * so a delivery failure never loses a message. `ip_hash` is a salted SHA-256, never the raw address.
+ */
+export const formSubmissions = sqliteTable(
+  "form_submissions",
+  {
+    id: text("id").primaryKey(),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    message: text("message").notNull(),
+    language: text("language").notNull(),
+    ipHash: text("ip_hash").notNull(),
+    userAgent: text("user_agent").notNull().default(""),
+    /** Set when the notification email was accepted by the provider. */
+    deliveredAt: integer("delivered_at", { mode: "timestamp_ms" }),
+    /** Why the notification email failed; null while undelivered-but-not-failed (store-only mode). */
+    deliveryError: text("delivery_error"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("form_submissions_site_id_created_at_idx").on(t.siteId, t.createdAt),
+    index("form_submissions_ip_hash_created_at_idx").on(t.ipHash, t.createdAt),
+  ],
 );
 
 export type User = typeof users.$inferSelect;

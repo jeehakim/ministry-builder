@@ -7,7 +7,10 @@ import {
   publishedImagePrefix,
   publishedIndexKey,
   publishedLanguageIndexKey,
+  publishedLanguageThanksKey,
+  publishedThanksKey,
 } from "./published";
+import { handleContactSubmission } from "./contact";
 import { sites } from "./db/schema";
 import { SLUG_PATTERN } from "./routes/sites";
 import type { AppEnv } from "./types";
@@ -55,8 +58,10 @@ function isSitesHost(hostname: string, sitesHost: string): boolean {
  * Serves published sites from the PUBLISHED bucket (never from IMAGES). Runs before CORS and
  * auth: requests for the sites host never reach the API routes.
  *
- * Host form:      sites.shofar.io/<slug>/, /<slug>/<lang>/ and /<slug>/images/<file>
- * Subdomain form: <slug>.sites.shofar.io/, /<lang>/ and /images/<file>
+ * Host form:      sites.shofar.io/<slug>/, /<slug>/<lang>/, /<slug>/thanks/, /<slug>/<lang>/thanks/ and /<slug>/images/<file>
+ * Subdomain form: <slug>.sites.shofar.io/, /<lang>/, /thanks/, /<lang>/thanks/ and /images/<file>
+ *
+ * The one write: POST /<slug>/contact (subdomain form: POST /contact) takes contact-form submissions.
  */
 export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
   const sitesHost = c.env.PUBLIC_SITES_HOST?.toLowerCase();
@@ -64,7 +69,8 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
   const hostname = url.hostname.toLowerCase();
   if (!sitesHost || !isSitesHost(hostname, sitesHost)) return next();
 
-  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+  const isContactPath = hostname === sitesHost ? /^\/[^/]+\/contact$/.test(url.pathname) : url.pathname === "/contact";
+  if (!isContactPath && c.req.method !== "GET" && c.req.method !== "HEAD") {
     return new Response("Method not allowed", {
       status: 405,
       headers: { Allow: "GET, HEAD", "X-Content-Type-Options": "nosniff" },
@@ -89,6 +95,9 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
   }
   if (!SLUG_PATTERN.test(slug)) return notFoundPage();
 
+  // Submissions are accepted for any site with a contact address, published or not.
+  if (rest === "/contact") return handleContactSubmission(c.req.raw, c.env, slug, base);
+
   const [site] = await drizzle(c.env.DB)
     .select({ id: sites.id })
     .from(sites)
@@ -102,7 +111,19 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
   let pageLanguage: string | undefined;
   const languageMatch = /^\/([^/]+)(\/)?$/.exec(rest);
   const lang = languageMatch?.[1];
-  if (rest === "/") {
+  const thanksMatch = /^(?:\/([^/]+))?\/thanks(\/)?$/.exec(rest);
+  const thanksLang = thanksMatch?.[1];
+  if (thanksMatch && (thanksLang === undefined || LANGUAGE_PATH_PATTERN.test(thanksLang))) {
+    key = thanksLang === undefined ? publishedThanksKey(site.id) : publishedLanguageThanksKey(site.id, thanksLang);
+    // The thank-you page is only ever reached through a form post; it must not be cached or indexed.
+    cacheControl = "no-store";
+    isPage = true;
+    pageLanguage = thanksLang;
+    if (thanksMatch[2] === undefined) {
+      if (!(await c.env.PUBLISHED.head(key))) return notFoundPage();
+      return redirect(301, `${base}${thanksLang === undefined ? "" : `/${thanksLang}`}/thanks/${url.search}`);
+    }
+  } else if (rest === "/") {
     key = publishedIndexKey(site.id);
     cacheControl = "public, max-age=60";
     isPage = true;

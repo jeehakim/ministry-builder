@@ -7,6 +7,7 @@ import { loadAuthorizedSite } from "../access";
 import { organizations, siteVersions, sites } from "../db/schema";
 import { newId } from "../ids";
 import { publishedUrlFor } from "../published";
+import { countMessages } from "./messages";
 import type { AppEnv } from "../types";
 
 export const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
@@ -143,7 +144,8 @@ siteRoutes.get("/sites/:id", async (c) => {
       .limit(1);
     if (version) document = JSON.parse(version.document);
   }
-  return c.json({ site: { ...site, publishedUrl: publishedUrlFor(c.env, site.publishedPath) }, document });
+  const messageCount = await countMessages(db, site.id);
+  return c.json({ site: { ...site, publishedUrl: publishedUrlFor(c.env, site.publishedPath), messageCount }, document });
 });
 
 siteRoutes.put(

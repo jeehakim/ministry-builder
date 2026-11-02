@@ -1,3 +1,15 @@
+/** The slice of the Cloudflare `send_email` binding the form endpoint uses (`SendEmail` satisfies it). */
+export type EmailBinding = {
+  send(message: {
+    from: string;
+    to: string;
+    replyTo?: string;
+    subject: string;
+    text: string;
+    html: string;
+  }): Promise<unknown>;
+};
+
 export type Bindings = {
   DB: D1Database;
   IMAGES: R2Bucket;
@@ -24,6 +36,16 @@ export type Bindings = {
   OPENAI_API_KEY?: string;
   /** Secret. Claude API key from console.anthropic.com; powers the AI copilot when chosen (see AI_PROVIDER). */
   ANTHROPIC_API_KEY?: string;
+  /** Cloudflare Email Sending binding (`send_email` in wrangler.jsonc, binding name EMAIL). Optional: needs a paid plan. */
+  EMAIL?: EmailBinding;
+  /** "cloudflare" or "resend" turns on contact-form notification emails; anything else is store-only (var). */
+  EMAIL_PROVIDER?: string;
+  /** From address of notification emails, e.g. `Ministry Sites <forms@shofar.io>` (var). Defaults to forms@shofar.io. */
+  EMAIL_FROM?: string;
+  /** Secret. Resend API key, used when EMAIL_PROVIDER is "resend". */
+  RESEND_API_KEY?: string;
+  /** Salt mixed into the visitor IP hash used for rate limiting (var). Defaults to "ministry". */
+  FORM_SALT?: string;
 };
 
 export type AuthUser = {

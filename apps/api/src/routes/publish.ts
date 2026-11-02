@@ -1,6 +1,6 @@
 import type { ImageRef } from "@ministry/schema";
 import { languageName, localizeDocument, SiteDocument, siteLanguages } from "@ministry/schema";
-import { renderSite, type RenderOptions } from "@ministry/templates";
+import { renderSite, renderThanksPage, type RenderOptions } from "@ministry/templates";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
@@ -14,7 +14,9 @@ import {
   publishedImagePrefix,
   publishedIndexKey,
   publishedLanguageIndexKey,
+  publishedLanguageThanksKey,
   publishedPrefix,
+  publishedThanksKey,
   publishedUrlFor,
 } from "../published";
 import type { AppEnv } from "../types";
@@ -70,11 +72,17 @@ publishRoutes.post("/sites/:id/publish", async (c) => {
   const pages = languages.map((lang) => {
     const imagesDir = lang === primary ? "images/" : "../images/";
     const key = lang === primary ? publishedIndexKey(site.id) : publishedLanguageIndexKey(site.id, lang);
-    const rendered = renderSite(localizeDocument(doc, lang), {
+    const localized = localizeDocument(doc, lang);
+    const rendered = renderSite(localized, {
       imageUrl: (ref) => (ABSOLUTE_URL.test(ref.src) ? ref.src : `${imagesDir}${basename(ref.src)}`),
       languageLinks: languageLinksFor(languages, primary, lang),
+      // Resolves to /<slug>/contact from both /<slug>/ and /<slug>/<lang>/ (see handleContactSubmission).
+      formAction: lang === primary ? "contact" : "../contact",
     });
-    return { lang, key, html: rendered.html, images: rendered.images };
+    // Both thank-you pages sit one folder below their language page, so "../" leads back to it.
+    const thanksKey = lang === primary ? publishedThanksKey(site.id) : publishedLanguageThanksKey(site.id, lang);
+    const thanksHtml = renderThanksPage(localized, { backHref: "../" });
+    return { lang, key, html: rendered.html, images: rendered.images, thanksKey, thanksHtml };
   });
   const images = pages.flatMap((page) => page.images);
 
@@ -95,20 +103,22 @@ publishRoutes.post("/sites/:id/publish", async (c) => {
   }
 
   for (const page of pages) {
-    await c.env.PUBLISHED.put(page.key, page.html, {
+    const options = {
       httpMetadata: { contentType: "text/html; charset=utf-8" },
       // Lets the hosting handler answer with Content-Language without reading the page.
       ...(LANGUAGE_TAG_PATTERN.test(page.lang) ? { customMetadata: { language: page.lang } } : {}),
-    });
+    };
+    await c.env.PUBLISHED.put(page.key, page.html, options);
+    await c.env.PUBLISHED.put(page.thanksKey, page.thanksHtml, options);
   }
 
   // Stale images, and language pages of languages that are no longer in the document.
-  const written = new Set(pages.map((page) => page.key));
+  const written = new Set(pages.flatMap((page) => [page.key, page.thanksKey]));
   const sitePrefix = publishedPrefix(site.id);
   const stale = (await listKeys(c.env.PUBLISHED, sitePrefix)).filter((key) => {
     if (key.startsWith(imagePrefix)) return !keep.has(key);
     const rest = key.slice(sitePrefix.length);
-    return /^[^/]+\/index\.html$/.test(rest) && !written.has(key);
+    return /^[^/]+\/(?:thanks\/)?index\.html$/.test(rest) && !written.has(key);
   });
   await deleteKeys(c.env.PUBLISHED, stale);
 

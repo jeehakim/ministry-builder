@@ -44,7 +44,7 @@ export function Preview({
 
   const rendered = useMemo<Rendered>(() => {
     try {
-      return { ok: true, html: renderSite(debounced.doc, { imageUrl: (ref) => backend.imageUrl(ref), editor: true, languageLinks: debounced.languageLinks }).html };
+      return { ok: true, html: renderSite(debounced.doc, { imageUrl: (ref) => backend.imageUrl(ref), editor: true, formAction: "#", languageLinks: debounced.languageLinks }).html };
     } catch (err) {
       const message =
         err instanceof Error && "issues" in err && Array.isArray(err.issues)

@@ -17,6 +17,7 @@ import { useBackend } from "../backend-context";
 import { PublishModal } from "../components/PublishModal";
 import { buildExportZip, downloadBlob, exportFileName } from "../lib/exportZip";
 import { previewLanguageLinks } from "../lib/languages";
+import { platformContactEmail } from "../lib/messages";
 import { useLatest } from "../lib/useLatest";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +26,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AiProvider, useAi } from "./AiContext";
 import { DraftDialog } from "./DraftDialog";
+import { MessagesDialog } from "./MessagesDialog";
 import { editSection, formatIssue, setTranslation } from "./documentOps";
 import { EditorHeader } from "./EditorHeader";
 import { SiteIdProvider } from "./EditorContext";
@@ -68,7 +70,7 @@ function Editor({ siteId }: { siteId: string }) {
 }
 
 type EditorState = ReturnType<typeof useSiteDocument>;
-type Dialog = "draft" | "variations" | null;
+type Dialog = "draft" | "variations" | "messages" | null;
 
 function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteInfo }) {
   const { editor, doc, site } = props;
@@ -84,6 +86,7 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
   const [variations, setVariations] = useState<AiDraftResponse | null>(null);
   const dialogNow = useLatest(dialog);
   const siteSlug = site.slug;
+  const contactEmail = useMemo(() => platformContactEmail(doc), [doc]);
 
   const { active: lang, translating, setEditingLang } = useEditingLanguage(doc);
   const [translatingTo, setTranslatingTo] = useState<string | null>(null);
@@ -154,7 +157,7 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
     setExporting(true);
     try {
       if (!parsed.success) throw new Error(`Fix this before exporting: ${formatIssue(parsed.error)}`);
-      const blob = await buildExportZip(parsed.data, backend);
+      const blob = await buildExportZip(parsed.data, backend, siteSlug);
       downloadBlob(blob, exportFileName(parsed.data, siteSlug, backend.mode));
       toast.success("ZIP downloaded", { description: "Drop it on cloudflare.com/drop to go live." });
     } catch (err) {
@@ -166,7 +169,7 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
 
   function openPreviewTab() {
     try {
-      const { html } = renderSite(viewDoc, { imageUrl: (ref) => backend.imageUrl(ref) });
+      const { html } = renderSite(viewDoc, { imageUrl: (ref) => backend.imageUrl(ref), formAction: "#" });
       const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
       window.open(url, "_blank", "noopener");
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
@@ -191,6 +194,7 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
           onVariations={() => setDialog("variations")}
           onExport={() => void handleExport()}
           onPublish={() => setPublishOpen(true)}
+          onMessages={() => setDialog("messages")}
         />
 
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(340px,400px)_1fr]">
@@ -322,6 +326,15 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
         />
       </div>
 
+      {backend.messages ? (
+        <MessagesDialog
+          open={dialog === "messages"}
+          onOpenChange={(open) => setDialog(open ? "messages" : null)}
+          orgName={doc.meta.orgName}
+          contactEmail={contactEmail}
+          onCountChange={(messageCount) => editor.updateSite({ messageCount })}
+        />
+      ) : null}
       <DraftDialog open={dialog === "draft"} onOpenChange={(open) => setDialog(open ? "draft" : null)} onGenerate={(r) => void handleGenerate(r)} />
       <VariationPicker
         open={dialog === "variations"}

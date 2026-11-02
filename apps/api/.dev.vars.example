@@ -15,3 +15,14 @@ ANTHROPIC_API_KEY=
 # Shared token for staff automation. Send it as the X-Staff-Token header to act as the admin user "staff-bot".
 # Leave unset to disable staff access. Production value lives on the Worker as a secret.
 STAFF_API_TOKEN=
+
+# Contact-form notification emails. wrangler.jsonc sets EMAIL_PROVIDER="none" (store messages only, no email).
+# Option 1, Cloudflare Email Sending: uncomment the send_email binding in wrangler.jsonc, then
+# EMAIL_PROVIDER=cloudflare
+# Option 2, Resend (resend.com): verify the EMAIL_FROM domain there, then
+# EMAIL_PROVIDER=resend
+RESEND_API_KEY=
+# Sender of the notification emails (default in wrangler.jsonc: Ministry Sites <forms@shofar.io>).
+# EMAIL_FROM="Ministry Sites <forms@shofar.io>"
+# Salt for the hashed visitor IP used by the form rate limit (default "ministry").
+# FORM_SALT=
