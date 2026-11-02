@@ -1,9 +1,13 @@
 import {
   emptySiteDocument,
   SiteDocument,
+  type AiAddSectionRequest,
+  type AiAddSectionResponse,
   type AiAltTextResponse,
   type AiDraftRequest,
   type AiDraftResponse,
+  type AiEditRequest,
+  type AiEditResponse,
   type AiRewriteRequest,
   type AiRewriteResponse,
   type AiThemeRequest,
@@ -41,6 +45,10 @@ export interface AiBackend {
   altText(siteId: string, assetKey: string): Promise<AiAltTextResponse>;
   /** Translates the whole page into `language`. The server also saves the overlay as a new version. */
   translate(siteId: string, language: string): Promise<AiTranslateResponse>;
+  /** Proposes changes to one scope of the saved page. Nothing is stored until the editor applies them. */
+  edit(siteId: string, request: AiEditRequest): Promise<AiEditResponse>;
+  /** Writes one new section for the saved page; the editor inserts it. */
+  addSection(siteId: string, request: AiAddSectionRequest): Promise<AiAddSectionResponse>;
 }
 
 /** Customer domains on hosted sites. Only the API backend has them. */
@@ -124,6 +132,8 @@ export function createApiBackend(getToken: GetToken): Backend {
       theme: (siteId, request) => api.aiTheme(siteId, request),
       altText: (siteId, assetKey) => api.aiAltText(siteId, assetKey),
       translate: (siteId, language) => api.aiTranslate(siteId, language),
+      edit: (siteId, request) => api.aiEdit(siteId, request),
+      addSection: (siteId, request) => api.aiAddSection(siteId, request),
     },
     messages: {
       list: (siteId) => api.listMessages(siteId),

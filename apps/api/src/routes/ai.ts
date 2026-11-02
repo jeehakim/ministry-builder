@@ -1,6 +1,8 @@
 import {
+  AiAddSectionRequest,
   AiAltTextRequest,
   AiDraftRequest,
+  AiEditRequest,
   AiRewriteRequest,
   AiThemeRequest,
   AiTranslateRequest,
@@ -8,8 +10,10 @@ import {
   Theme,
   TranslationOverlay,
   type AiAction,
+  type AiAddSectionResponse,
   type AiAltTextResponse,
   type AiDraftResponse,
+  type AiEditResponse,
   type AiRewriteResponse,
   type AiThemeResponse,
   type AiTranslateResponse,
@@ -24,6 +28,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { z } from "zod";
 import { isSiteAssetKey, loadAuthorizedSite } from "../access";
 import { AiProviderError, createProvider, type AiCallUsage, type AiProvider } from "../ai";
+import { conformNewSection, conformOption, editTarget, pageSummary } from "../ai/edit";
 import type { TemplateChoice } from "../ai/provider";
 import { dailyLimit, usedToday, utcDayWindow } from "../ai/usage";
 import { aiUsage, organizations, siteVersions, sites, type Site } from "../db/schema";
@@ -388,5 +393,96 @@ aiRoutes.post("/sites/:id/ai/translate", tooLarge, async (c) => {
   ]);
 
   const response: AiTranslateResponse = { language, overlay: overlay.data };
+  return c.json(response);
+});
+
+// ---- Scoped editing (Ask AI) ---------------------------------------------
+
+/**
+ * Proposes changes to one scope of the saved document. Nothing is stored: the editor
+ * applies the change set when the user clicks Apply. One quota action per call,
+ * whether it returns one option or three.
+ */
+aiRoutes.post("/sites/:id/ai/edit", tooLarge, async (c) => {
+  const g = await guard(c);
+  if (g instanceof Response) return g;
+  const body = await parseBody(c, AiEditRequest);
+  if (body instanceof Response) return body;
+
+  const db = drizzle(c.env.DB);
+  const document = await currentDocument(db, g.site);
+  if (!document) return c.json({ error: "Site has no valid content to edit" }, 409);
+  const target = editTarget(document, body.scope);
+  if (!target) return c.json({ error: "That section is not on the saved page. Save and try again." }, 400);
+  const options = body.scope.kind === "page" ? 1 : body.options;
+
+  const result = await callProvider(c, "edit", () =>
+    g.provider.edit({
+      instruction: body.instruction,
+      scope: body.scope,
+      target,
+      pageSummary: pageSummary(document),
+      templateId: document.theme.templateId,
+      templates: templateChoices(),
+      orgName: g.orgName,
+      language: document.meta.language,
+      options,
+    }),
+  );
+  if (result instanceof Response) return result;
+
+  const changes = result.options.flatMap((option) => conformOption(document, body.scope, option, Object.keys(templates)));
+  // Tokens were spent whether or not the output was usable, so the call counts against the quota.
+  await db.insert(aiUsage).values(
+    usageRow(c.var.user.id, g.site.id, "edit", result.usage, {
+      request: { instruction: body.instruction, scope: body.scope, options },
+      result: { changes: changes.map((ch) => ({ target: ch.target, label: ch.label, after: ch.after })) },
+    }),
+  );
+  if (changes.length === 0) {
+    logError("ai_edit_invalid", requestIdOf(c), { scope: body.scope.kind, options: result.options.length });
+    return c.json({ error: "The AI returned changes we could not use. Please try again." }, 502);
+  }
+  const response: AiEditResponse = { changes, model: result.usage.model };
+  return c.json(response);
+});
+
+/** Writes one new section for the saved page. The editor inserts it; nothing is stored here. */
+aiRoutes.post("/sites/:id/ai/add-section", tooLarge, async (c) => {
+  const g = await guard(c);
+  if (g instanceof Response) return g;
+  const body = await parseBody(c, AiAddSectionRequest);
+  if (body instanceof Response) return body;
+
+  const db = drizzle(c.env.DB);
+  const document = await currentDocument(db, g.site);
+  if (!document) return c.json({ error: "Site has no valid content to add to" }, 409);
+  const afterSection = body.afterSectionId ? document.sections.find((s) => s.id === body.afterSectionId) : undefined;
+  if (body.afterSectionId && !afterSection) return c.json({ error: "That section is not on the saved page. Save and try again." }, 400);
+
+  const result = await callProvider(c, "add_section", () =>
+    g.provider.addSection({
+      instruction: body.instruction,
+      pageSummary: pageSummary(document),
+      existingTypes: document.sections.map((s) => s.type),
+      afterSection,
+      orgName: g.orgName,
+      language: document.meta.language,
+    }),
+  );
+  if (result instanceof Response) return result;
+
+  const section = conformNewSection(document, result.section);
+  await db.insert(aiUsage).values(
+    usageRow(c.var.user.id, g.site.id, "add_section", result.usage, {
+      request: { instruction: body.instruction, afterSectionId: body.afterSectionId },
+      result: section ? { section } : null,
+    }),
+  );
+  if (!section) {
+    logError("ai_add_section_invalid", requestIdOf(c), {});
+    return c.json({ error: "The AI returned a section we could not use. Please try again." }, 502);
+  }
+  const response: AiAddSectionResponse = { section, model: result.usage.model };
   return c.json(response);
 });

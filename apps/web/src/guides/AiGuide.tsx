@@ -26,6 +26,23 @@ export function AiGuide() {
         </Tip>
       </Section>
 
+      <Section title="Ask AI about what you are looking at">
+        <p>
+          The <strong>Ask AI</strong> box at the bottom of the sidebar edits only the scope on its chip: the selected section, <strong>Site text</strong>,{" "}
+          <strong>Design</strong>, or the <strong>Whole page</strong>. Select a section and type "warmer, and mention childcare"; type "add a section about the
+          youth camp in July" to insert a new section after it. Press <strong>⌘K</strong> to jump to the box from anywhere.
+        </p>
+        <p>
+          Every answer comes back as a <strong>proposed change</strong>: the before and after text in the sidebar, and the changed sections outlined in the
+          preview. Click <strong>Apply</strong>, <strong>Try again</strong> or <strong>Discard</strong>; nothing you typed is replaced until you apply, and an
+          applied change is one Undo away. In a section's panel, <strong>3 options</strong> rewrites only that section three ways.
+        </p>
+        <p>
+          Empty fields show <strong>Write this with AI</strong>, and the <strong>Suggestions</strong> menu in the top bar lists concrete fixes it found on the page
+          (missing alt text, a thin About, no contact email, a hero without a button). Each one opens Ask AI with the instruction filled in.
+        </p>
+      </Section>
+
       <Section title="Polish any field">
         <p>
           Every text field has a small sparkle button next to its label. It offers <strong>Improve</strong>, <strong>Shorter</strong>,{" "}
@@ -52,8 +69,8 @@ export function AiGuide() {
 
       <Section title="Limits and privacy">
         <p>
-          The pill in the top bar shows your AI actions for today out of a daily allowance of 30, resetting at midnight UTC. Drafts, translations and
-          field assists each count as one. Your notes are used only to write your page; they are not used to train any model. When it says{" "}
+          The pill in the top bar shows your AI actions for today out of a daily allowance of 30, resetting at midnight UTC. Drafts, translations, Ask AI edits
+          (including the three options) and field assists each count as one. Your notes are used only to write your page; they are not used to train any model. When it says{" "}
           <strong>AI off</strong>, the platform has no AI key configured and everything else keeps working.
         </p>
         <p>

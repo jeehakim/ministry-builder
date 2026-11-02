@@ -1,4 +1,5 @@
 import { emptySiteDocument, type SiteDocument, type Theme } from "@ministry/schema";
+import type { EditOption } from "./provider";
 import type { AiCallUsage, AiProvider } from "./provider";
 import { extractTranslatable, mapStrings } from "./translatable";
 
@@ -66,6 +67,50 @@ export function createFakeProvider(): AiProvider {
     async translate(input) {
       const prefix = `[${input.targetLanguage}] `;
       return { overlay: mapStrings(extractTranslatable(input.document), (s) => `${prefix}${s}`), usage: USAGE };
+    },
+
+    async edit(input) {
+      const labels = ["Warmer", "Shorter", "Clearer"];
+      const t = input.target;
+      const options: EditOption[] = Array.from({ length: input.options }, (_, i) => {
+        const label = labels[i % labels.length]!;
+        switch (t.kind) {
+          case "section":
+            return {
+              label,
+              changes: [
+                {
+                  target: t.section.id,
+                  after: {
+                    ...t.section,
+                    heading: `${t.section.heading} · ${label}`,
+                    ...("body" in t.section ? { body: `${t.section.body}\n\n${input.instruction}` } : {}),
+                  },
+                },
+              ],
+            };
+          case "meta":
+            return { label, changes: [{ target: "meta", after: { ...t.meta, tagline: `${input.instruction} · ${label}` } }] };
+          case "theme":
+            return { label, changes: [{ target: "theme", after: { ...t.theme, ...LOOKS[i % LOOKS.length]!.theme } }] };
+          case "page":
+            return {
+              label,
+              changes: [
+                { target: "meta", after: { ...t.meta, tagline: `${t.meta.tagline} · ${label}` } },
+                ...t.sections.filter((s) => s.type === "hero" || s.type === "about").map((s) => ({ target: s.id, after: { ...s, heading: `${s.heading} · ${label}` } })),
+              ],
+            };
+        }
+      });
+      return { options, usage: USAGE };
+    },
+
+    async addSection(input) {
+      const section = /event|camp|service|time|schedule/i.test(input.instruction)
+        ? { id: "new", type: "events", heading: "Upcoming", items: [{ title: input.instruction, when: "", where: "", description: "" }] }
+        : { id: "new", type: "about", heading: "More about us", body: input.instruction };
+      return { section, usage: USAGE };
     },
   };
 }

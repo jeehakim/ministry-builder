@@ -3,10 +3,14 @@ import type { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { AiProviderError, type AiCallUsage, type AiProvider } from "./provider";
 import {
+  addSectionSystemPrompt,
+  addSectionUserText,
   altSystemPrompt,
   altUserText,
   draftSystemPrompt,
   draftUserText,
+  editSystemPrompt,
+  editUserText,
   rewriteSystemPrompt,
   rewriteUserText,
   themeSystemPrompt,
@@ -14,7 +18,7 @@ import {
   translateSystemPrompt,
   translateUserText,
 } from "./prompts";
-import { AltOutput, draftOutputSchema, RewriteOutput, ThemeOutput, translationOutputSchema } from "./schemas";
+import { AddSectionOutput, AltOutput, draftOutputSchema, editOutputSchema, RewriteOutput, ThemeOutput, translationOutputSchema } from "./schemas";
 import { extractTranslatable, isEmptyTranslatable } from "./translatable";
 
 type ContentPart = Anthropic.TextBlockParam | Anthropic.ImageBlockParam;
@@ -33,6 +37,8 @@ const DRAFT_MAX_TOKENS = 32_000;
 const SMALL_MAX_TOKENS = 8_000;
 const TRANSLATE_TIMEOUT_MS = 90_000;
 const TRANSLATE_MAX_TOKENS = 16_000;
+/** A page-wide edit may return several sections; a scoped one is small. */
+const PAGE_EDIT_MAX_TOKENS = 16_000;
 
 const FRIENDLY_UNAVAILABLE = "The AI service is unavailable right now. Please try again in a moment.";
 const FRIENDLY_BAD_OUTPUT = "The AI returned an answer we could not use. Please try again.";
@@ -291,6 +297,28 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): AiPr
         maxTokens: TRANSLATE_MAX_TOKENS,
       });
       return { overlay: data, usage };
+    },
+
+    async edit(input) {
+      const { data, usage } = await run({
+        system: editSystemPrompt(input),
+        user: [{ type: "text", text: editUserText(input) }],
+        schema: editOutputSchema(input),
+        timeout: input.scope.kind === "page" ? TRANSLATE_TIMEOUT_MS : SMALL_TIMEOUT_MS,
+        maxTokens: input.scope.kind === "page" ? PAGE_EDIT_MAX_TOKENS : SMALL_MAX_TOKENS,
+      });
+      return { options: data.options, usage };
+    },
+
+    async addSection(input) {
+      const { data, usage } = await run({
+        system: addSectionSystemPrompt(input),
+        user: [{ type: "text", text: addSectionUserText(input) }],
+        schema: AddSectionOutput,
+        timeout: SMALL_TIMEOUT_MS,
+        maxTokens: SMALL_MAX_TOKENS,
+      });
+      return { section: data.section, usage };
     },
   };
 }

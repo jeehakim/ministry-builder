@@ -61,3 +61,18 @@ test("theme rejects CSS or HTML syntax in colors and fonts", () => {
   const ok = parseSiteDocument({ ...base, theme: { primary: "#0F2A4A", headingFont: "system-ui, 'Segoe UI', sans-serif" } });
   assert.equal(ok.theme.primary, "#0F2A4A");
 });
+
+test("AiChange keeps section changes tied to their target and accepts meta and theme changes", async () => {
+  const { AiChange, AiEditRequest } = await import("./ai.ts");
+  const doc = emptySiteDocument("Org");
+  const hero = doc.sections[0]!;
+  assert.equal(AiChange.safeParse({ target: "hero", before: hero, after: { ...hero, heading: "Hi" } }).success, true);
+  assert.equal(AiChange.safeParse({ target: "about", before: hero, after: hero }).success, false);
+  assert.equal(AiChange.safeParse({ target: "hero", before: hero, after: { ...doc.sections[1]!, id: "hero" } }).success, false);
+  assert.equal(AiChange.safeParse({ target: "meta", before: doc.meta, after: { ...doc.meta, tagline: "New" } }).success, true);
+  assert.equal(AiChange.safeParse({ target: "theme", before: doc.theme, after: { ...doc.theme, primary: "#000" } }).success, true);
+  assert.equal(AiChange.safeParse({ target: "theme", before: doc.theme, after: { ...doc.theme, primary: "red" } }).success, false);
+  const req = AiEditRequest.parse({ instruction: " warmer ", scope: { kind: "section", id: "hero" } });
+  assert.deepEqual(req, { instruction: "warmer", scope: { kind: "section", id: "hero" }, options: 1 });
+  assert.equal(AiEditRequest.safeParse({ instruction: "x", scope: { kind: "section" } }).success, false);
+});

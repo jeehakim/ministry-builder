@@ -293,3 +293,39 @@ describe("Anthropic provider: translate", () => {
     expect(result.overlay).toEqual({ meta: {}, sections: {} });
   });
 });
+
+describe("Anthropic provider: scoped edits", () => {
+  const doc = emptySiteDocument("Grace Church");
+  const about = doc.sections.find((s) => s.type === "about")!;
+  const input = {
+    instruction: "Shorter",
+    scope: { kind: "section" as const, id: "about" },
+    target: { kind: "section" as const, section: about },
+    pageSummary: "Grace Church. Sections: hero, about, contact.",
+    templateId: "classic",
+    templates,
+    orgName: "Grace Church",
+    language: "en",
+    options: 3,
+  };
+
+  it("pins the section's id and type in the grammar and returns three normalized options", async () => {
+    const good = JSON.stringify({ options: [1, 2, 3].map((n) => ({ label: `Take ${n}`, section: { id: "about", type: "about", hidden: false, heading: "About", body: `Body ${n}` } })) });
+    const { ai, stream } = provider([{ content: good }]);
+    const result = await ai.edit(input);
+    expect(result.options).toHaveLength(3);
+    expect(result.options[2]!.changes[0]).toMatchObject({ target: "about", after: { body: "Body 3" } });
+    const body = stream.mock.calls[0]![0] as Body;
+    const section = body.output_config.format.schema.properties.options.items.properties.section;
+    expect(section.properties.id).toMatchObject({ const: "about" });
+    expect(section.properties.type).toMatchObject({ const: "about" });
+    expect(section.additionalProperties).toBe(false);
+    expect(JSON.stringify(body.messages[0]!.content)).not.toContain("Welcome to");
+  });
+
+  it("validates a new section", async () => {
+    const { ai } = provider([{ content: JSON.stringify({ section: { id: "s", type: "stories", items: [{ quote: "It changed my week." }] } }) }]);
+    const result = await ai.addSection({ instruction: "Add a testimonial", pageSummary: "Grace Church.", existingTypes: ["hero"], orgName: "Grace Church", language: "en" });
+    expect(result.section).toMatchObject({ type: "stories" });
+  });
+});

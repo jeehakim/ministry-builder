@@ -1,7 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
+  AiAddSectionRequest,
+  AiAddSectionResponse,
   AiDraftRequest,
   AiDraftResponse,
+  AiEditRequest,
+  AiEditResponse,
   AiRewriteRequest,
   AiThemeRequest,
   AiThemeResponse,
@@ -29,6 +33,7 @@ export const NO_KEY_REASON = "No AI key configured on the server";
 export const DRAFT_BUSY_KEY = "draft";
 export const THEME_BUSY_KEY = "theme";
 export const TRANSLATE_BUSY_KEY = "translate";
+export const EDIT_BUSY_KEY = "edit";
 
 export interface AiContextValue {
   /** The AI client, or null in local mode. */
@@ -47,6 +52,9 @@ export interface AiContextValue {
   runAltText(key: string, imageSrc: string): Promise<string | null>;
   runTheme(request: AiThemeRequest): Promise<AiThemeResponse | null>;
   runTranslate(language: string): Promise<AiTranslateResponse | null>;
+  /** Scoped edit (Ask AI). The result is a change set for the user to review; nothing is applied here. */
+  runEdit(request: AiEditRequest): Promise<AiEditResponse | null>;
+  runAddSection(request: AiAddSectionRequest): Promise<AiAddSectionResponse | null>;
 }
 
 const noop = async () => {};
@@ -65,6 +73,8 @@ const INERT: AiContextValue = {
   runAltText: unavailable,
   runTheme: unavailable,
   runTranslate: unavailable,
+  runEdit: unavailable,
+  runAddSection: unavailable,
 };
 
 const AiContext = createContext<AiContextValue>(INERT);
@@ -161,6 +171,8 @@ export function AiProvider({ children }: { children: ReactNode }) {
       },
       runTheme: (request) => run(THEME_BUSY_KEY, (client) => client.theme(siteId, request)),
       runTranslate: (language) => run(TRANSLATE_BUSY_KEY, (client) => client.translate(siteId, language)),
+      runEdit: (request) => run(EDIT_BUSY_KEY, (client) => client.edit(siteId, request)),
+      runAddSection: (request) => run(EDIT_BUSY_KEY, (client) => client.addSection(siteId, request)),
     };
   }, [ai, usage, busy, refreshUsage, run, siteId]);
 

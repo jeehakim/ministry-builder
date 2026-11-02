@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import {
   languageName,
@@ -8,9 +8,10 @@ import {
   type AiDraftRequest,
   type AiDraftResponse,
   type AiDraftVariation,
+  type AiEditScope,
   type Section,
 } from "@ministry/schema";
-import { AlertCircle, ArrowLeft, ExternalLink, Monitor, Smartphone } from "lucide-react";
+import { AlertCircle, ArrowLeft, ExternalLink, Layers, Monitor, Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import type { SiteInfo } from "../api";
 import { useBackend } from "../backend-context";
@@ -25,7 +26,22 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { AiProvider, useAi } from "./AiContext";
+import { AiProvider, EDIT_BUSY_KEY, useAi } from "./AiContext";
+import { AskAiBar, type ScopeChoice } from "./AskAiBar";
+import { AskAiProvider, type AskAiPrefill } from "./AskAiContext";
+import {
+  computeSuggestions,
+  isAddSectionInstruction,
+  isUntouchedStarter,
+  proposedDocument,
+  proposedSectionIds,
+  scopeLabel,
+  startWithAiSkipKey,
+  THREE_OPTIONS_INSTRUCTION,
+  type Proposal,
+  type Suggestion,
+} from "./askAi";
+import { ChangeSetReview } from "./ChangeSetReview";
 import { DraftDialog } from "./DraftDialog";
 import { MessagesDialog } from "./MessagesDialog";
 import { editSection, formatIssue, setTranslation } from "./documentOps";
@@ -38,6 +54,7 @@ import { Preview, type Device } from "./Preview";
 import { SectionList, sectionTitle } from "./SectionList";
 import { SECTION_ICONS } from "./sectionMeta";
 import { SiteForm } from "./SiteForm";
+import { StartWithAi } from "./StartWithAi";
 import { useEditingLanguage } from "./useEditingLanguage";
 import { useSiteDocument } from "./useSiteDocument";
 import { VariationPicker } from "./VariationPicker";
@@ -73,6 +90,27 @@ function Editor({ siteId }: { siteId: string }) {
 type EditorState = ReturnType<typeof useSiteDocument>;
 type Dialog = "draft" | "variations" | "messages" | null;
 
+/** What the user asked Ask AI for; kept so "Try again" can repeat it. */
+type AskInput = { instruction: string; scope: AiEditScope; options: 1 | 3 };
+
+const TRANSLATING_REASON = "Switch to the main language to use Ask AI; translations are edited by hand.";
+
+function readSkipped(siteId: string): boolean {
+  try {
+    return sessionStorage.getItem(startWithAiSkipKey(siteId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeSkipped(siteId: string): void {
+  try {
+    sessionStorage.setItem(startWithAiSkipKey(siteId), "1");
+  } catch {
+    // Private mode: the screen comes back on reload, which is harmless.
+  }
+}
+
 function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteInfo }) {
   const { editor, doc, site } = props;
   const backend = useBackend();
@@ -89,6 +127,15 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
   const siteSlug = site.slug;
   const contactEmail = useMemo(() => platformContactEmail(doc), [doc]);
 
+  // Ask AI: the bar's text and scope choice, the proposal under review, and the option shown in the preview.
+  const [instruction, setInstruction] = useState("");
+  const [scopeChoice, setScopeChoice] = useState<ScopeChoice>("selection");
+  const [askFocus, setAskFocus] = useState(0);
+  const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [chosen, setChosen] = useState(0);
+  const [lastAsk, setLastAsk] = useState<AskInput | null>(null);
+  const [startSkipped, setStartSkipped] = useState(() => readSkipped(site.id));
+
   const { active: lang, translating, setEditingLang } = useEditingLanguage(doc);
   const [translatingTo, setTranslatingTo] = useState<string | null>(null);
   // The forms and the preview show this view; edits are routed back to the primary text or an overlay.
@@ -100,6 +147,119 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
     () => viewDoc.sections.find((s) => s.id === selectedId) ?? viewDoc.sections[0],
     [viewDoc, selectedId],
   );
+
+  const askScope: AiEditScope = useMemo(() => {
+    if (scopeChoice === "page") return { kind: "page" };
+    if (scopeChoice === "meta") return { kind: "meta" };
+    if (scopeChoice === "theme") return { kind: "theme" };
+    if (tab === "site") return { kind: "meta" };
+    return selected ? { kind: "section", id: selected.id } : { kind: "page" };
+  }, [scopeChoice, tab, selected]);
+  const selectionLabel = tab === "site" ? "Site & design" : selected ? scopeLabel({ kind: "section", id: selected.id }, doc) : "Whole page";
+  const askLabel = scopeChoice === "selection" && tab === "site" ? "Site & design" : scopeLabel(askScope, doc);
+  const askBusy = ai.busy[EDIT_BUSY_KEY] === true;
+  const askDisabledReason = !ai.enabled ? ai.disabledReason : translating ? TRANSLATING_REASON : null;
+  const suggestions = useMemo(() => computeSuggestions(doc), [doc]);
+  const showStart = ai.enabled && !startSkipped && isUntouchedStarter(doc);
+
+  const prefillAsk = useCallback((prefill: AskAiPrefill) => {
+    const scope = prefill.scope;
+    if (scope) {
+      if (scope.kind === "section") {
+        setSelectedId(scope.id);
+        setTab("sections");
+        setScopeChoice("selection");
+      } else {
+        if (scope.kind !== "page") setTab("site");
+        setScopeChoice(scope.kind);
+      }
+    }
+    if (prefill.instruction !== undefined) setInstruction(prefill.instruction);
+    setAskFocus((n) => n + 1);
+  }, []);
+  const askAiValue = useMemo(() => ({ available: ai.enabled, prefill: prefillAsk }), [ai.enabled, prefillAsk]);
+
+  // ⌘K (Ctrl+K) focuses the Ask AI bar from anywhere in the editor.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setAskFocus((n) => n + 1);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  /** Sends an instruction for a scope; the result becomes the proposal under review. */
+  async function ask(input: AskInput) {
+    if (askBusy || askDisabledReason) {
+      if (askDisabledReason) toast.error(askDisabledReason);
+      return;
+    }
+    setLastAsk(input);
+    // The server edits its saved copy, so make sure it has the latest text.
+    try {
+      await editor.flush();
+    } catch (err) {
+      toast.error("Could not save your latest changes first", { description: err instanceof Error ? err.message : "Try again in a moment." });
+      return;
+    }
+    if (isAddSectionInstruction(input.instruction) && (input.scope.kind === "section" || input.scope.kind === "page")) {
+      const request = { instruction: input.instruction, afterSectionId: input.scope.kind === "section" ? input.scope.id : undefined };
+      const result = await ai.runAddSection(request);
+      if (result) {
+        setProposal({ kind: "add", request, section: result.section, model: result.model });
+        setChosen(0);
+      }
+      return;
+    }
+    const request = { instruction: input.instruction, scope: input.scope, options: input.options };
+    const result = await ai.runEdit(request);
+    if (result) {
+      setProposal({ kind: "edit", request, changes: result.changes, model: result.model });
+      setChosen(0);
+    }
+  }
+
+  function submitAsk() {
+    const text = instruction.trim();
+    if (!text) return;
+    void ask({ instruction: text, scope: askScope, options: 1 });
+  }
+
+  /** Applies the proposal to the document; `index` picks the option when there are several. */
+  function applyProposal(index: number) {
+    if (!proposal) return;
+    const before = doc;
+    const next = proposedDocument(doc, proposal, index);
+    const ids = proposedSectionIds(proposal, index);
+    editor.update(() => next);
+    if (ids[0]) {
+      setSelectedId(ids[0]);
+      setTab("sections");
+    } else {
+      setTab("site");
+    }
+    setScopeChoice("selection");
+    setProposal(null);
+    setInstruction("");
+    toast.success(proposal.kind === "add" ? "Section added" : "Changes applied", {
+      action: { label: "Undo", onClick: () => editor.update(() => before) },
+    });
+  }
+
+  function discardProposal() {
+    setProposal(null);
+  }
+
+  function handleSuggestion(suggestion: Suggestion) {
+    if (suggestion.kind === "languages") {
+      setTab("site");
+      return;
+    }
+    prefillAsk({ scope: suggestion.scope, instruction: suggestion.instruction });
+  }
 
   function openLanguage(code: string) {
     setEditingLang(code);
@@ -129,12 +289,12 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
     }
   }
 
-  async function handleGenerate(request: AiDraftRequest) {
+  async function handleGenerate(request: AiDraftRequest, options: { openPicker?: boolean } = {}) {
     const result = await ai.runDraft(request);
     if (!result) return;
     setVariations(result);
-    // Only take over the screen if the user is still looking at the draft form.
-    if (dialogNow.current === "draft") {
+    // Only take over the screen if the user is still looking at the draft form (or the first-run screen).
+    if (options.openPicker || dialogNow.current === "draft") {
       setDialog("variations");
       return;
     }
@@ -181,10 +341,36 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
 
   const issue = editor.save.kind === "invalid" ? editor.save.message : null;
   const SelectedIcon = selected ? SECTION_ICONS[selected.type] : null;
+  const previewDoc = proposal ? localizeDocument(proposedDocument(doc, proposal, chosen), lang) : viewDoc;
+  const outlineIds = useMemo(() => (proposal ? proposedSectionIds(proposal, chosen) : []), [proposal, chosen]);
+
+  if (showStart) {
+    return (
+      <>
+        <StartWithAi
+          orgName={doc.meta.orgName}
+          onGenerate={(r) => void handleGenerate(r, { openPicker: true })}
+          onSkip={() => {
+            writeSkipped(site.id);
+            setStartSkipped(true);
+          }}
+          hasVariations={variations !== null}
+          onReview={() => setDialog("variations")}
+        />
+        <VariationPicker
+          open={dialog === "variations"}
+          onOpenChange={(open) => setDialog(open ? "variations" : null)}
+          result={variations}
+          onUse={applyVariation}
+          onWriteAnother={() => setDialog(null)}
+        />
+      </>
+    );
+  }
 
   return (
-    <>
-      <div className="flex h-dvh flex-col bg-background">
+    <AskAiProvider value={askAiValue}>
+      <div className="flex h-dvh flex-col overflow-hidden bg-background">
         <EditorHeader
           orgName={doc.meta.orgName}
           save={editor.save}
@@ -196,12 +382,23 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
           onExport={() => void handleExport()}
           onPublish={() => setPublishOpen(true)}
           onMessages={() => setDialog("messages")}
+          suggestions={suggestions}
+          onSuggestion={handleSuggestion}
         />
 
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(340px,400px)_1fr]">
           <aside className="flex min-h-0 flex-col border-r bg-sidebar">
             <LanguageSwitcher languages={languages} active={lang} onSelect={setEditingLang} />
-            <Tabs value={tab} onValueChange={(v) => setTab(v === "site" ? "site" : "sections")} className="flex min-h-0 flex-1 flex-col gap-0">
+            {/* overflow-hidden: absolutely positioned helpers inside the tabs (sr-only inputs) must not stretch the page. */}
+            <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+            <Tabs
+              value={tab}
+              onValueChange={(v) => {
+                setTab(v === "site" ? "site" : "sections");
+                setScopeChoice("selection");
+              }}
+              className="flex min-h-0 flex-1 flex-col gap-0"
+            >
               <div className="shrink-0 border-b px-3 pt-2">
                 <TabsList variant="line" className="w-full">
                   <TabsTrigger value="sections">Sections</TabsTrigger>
@@ -222,7 +419,10 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
                     sections={viewDoc.sections}
                     locked={translating}
                     selectedId={selected?.id ?? null}
-                    onSelect={setSelectedId}
+                    onSelect={(id) => {
+                      setSelectedId(id);
+                      setScopeChoice("selection");
+                    }}
                     onMove={editor.moveSection}
                     onReorder={editor.reorderSection}
                     onToggleHidden={editor.toggleHidden}
@@ -238,16 +438,33 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
                         <span className="grid size-6 place-items-center rounded-md bg-muted text-muted-foreground">
                           <SelectedIcon className="size-3.5" aria-hidden="true" />
                         </span>
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium">{sectionTitle(selected)}</p>
                           <p className="text-[11px] text-muted-foreground">{SECTION_LABELS[selected.type]} section</p>
                         </div>
+                        {ai.enabled && !translating ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="xs"
+                                disabled={askBusy}
+                                onClick={() => void ask({ instruction: THREE_OPTIONS_INSTRUCTION, scope: { kind: "section", id: selected.id }, options: 3 })}
+                              >
+                                <Layers />3 options
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom">Rewrite only this section three ways; the rest of the page stays as it is.</TooltipContent>
+                          </Tooltip>
+                        ) : null}
                       </div>
                       <FieldsForm
                         key={`${selected.id}:${lang}`}
                         value={selected}
                         fields={SECTION_FIELDS[selected.type]}
                         sectionType={selected.type}
+                        sectionId={selected.id}
                         translating={translating}
                         onChange={(next: Obj) => editor.update((d) => editSection(d, lang, next as Section))}
                       />
@@ -269,6 +486,35 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
                 </div>
               </TabsContent>
             </Tabs>
+            {proposal ? (
+              <ChangeSetReview
+                doc={doc}
+                proposal={proposal}
+                chosen={chosen}
+                onChosen={setChosen}
+                busy={askBusy}
+                onApply={applyProposal}
+                onTryAgain={() => {
+                  if (lastAsk) void ask(lastAsk);
+                }}
+                onDiscard={discardProposal}
+              />
+            ) : null}
+            </div>
+            {ai.ai ? (
+              <AskAiBar
+                scopeLabel={askLabel}
+                selectionLabel={selectionLabel}
+                choice={scopeChoice}
+                onChoice={setScopeChoice}
+                instruction={instruction}
+                onInstructionChange={setInstruction}
+                onSubmit={submitAsk}
+                busy={askBusy}
+                disabledReason={askDisabledReason}
+                focusKey={askFocus}
+              />
+            ) : null}
           </aside>
 
           <main className="flex min-h-0 flex-col">
@@ -304,12 +550,13 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
             </div>
             <div className="min-h-0 flex-1">
               <Preview
-                doc={viewDoc}
+                doc={previewDoc}
                 device={device}
                 hostname={`${siteSlug}.sites.shofar.io`}
-                focusSectionId={tab === "sections" ? (selected?.id ?? null) : null}
+                focusSectionId={outlineIds[0] ?? (tab === "sections" ? (selected?.id ?? null) : null)}
                 languageLinks={languageLinks}
                 onSelectLanguage={setEditingLang}
+                outlineSectionIds={outlineIds}
               />
             </div>
           </main>
@@ -344,7 +591,7 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
         onUse={applyVariation}
         onWriteAnother={() => setDialog("draft")}
       />
-    </>
+    </AskAiProvider>
   );
 }
 

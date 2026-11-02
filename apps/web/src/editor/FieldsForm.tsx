@@ -6,7 +6,8 @@ import { TextField } from "../components/Field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { FieldSpec, Obj } from "./fields";
+import { useAskAi } from "./AskAiContext";
+import { SECTION_LABELS, type FieldSpec, type Obj } from "./fields";
 
 function isObj(v: unknown): v is Obj {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -40,12 +41,25 @@ export function FieldsForm(props: {
    * removing or reordering items are locked, because they are shared by every language.
    */
   translating?: boolean;
+  /** The section being edited; with it, empty text fields offer "Write this with AI" scoped to the section. */
+  sectionId?: string;
+  /** Where a nested field lives, e.g. 'program 2', for the ghost prompt's instruction. */
+  ghostContext?: string;
 }) {
-  const { value, fields, onChange, sectionType, translating = false } = props;
+  const { value, fields, onChange, sectionType, translating = false, sectionId, ghostContext } = props;
   return (
     <div className="space-y-4">
       {fields.map((field) => (
-        <FieldView key={field.key} field={field} value={value} onChange={onChange} sectionType={sectionType} translating={translating} />
+        <FieldView
+          key={field.key}
+          field={field}
+          value={value}
+          onChange={onChange}
+          sectionType={sectionType}
+          translating={translating}
+          sectionId={sectionId}
+          ghostContext={ghostContext}
+        />
       ))}
     </div>
   );
@@ -57,18 +71,33 @@ function FieldView({
   onChange,
   sectionType,
   translating,
+  sectionId,
+  ghostContext,
 }: {
   field: FieldSpec;
   value: Obj;
   onChange: (next: Obj) => void;
   sectionType?: string;
   translating: boolean;
+  sectionId?: string;
+  ghostContext?: string;
 }) {
   const current = value[field.key];
   const reduced = useReducedMotion();
+  const askAi = useAskAi();
 
   switch (field.kind) {
-    case "text":
+    case "text": {
+      // Facts the AI must not invent (links, email, phone, endpoints) get no ghost prompt.
+      const canGhost = askAi.available && sectionId !== undefined && !translating && !field.fixed && !field.optional;
+      const sectionName = sectionType && sectionType in SECTION_LABELS ? SECTION_LABELS[sectionType as keyof typeof SECTION_LABELS] : sectionType;
+      const ghost = canGhost
+        ? () =>
+            askAi.prefill({
+              scope: { kind: "section", id: sectionId },
+              instruction: `Write the ${field.label.toLowerCase()}${ghostContext ? ` of ${ghostContext}` : ""} in the ${sectionName} section`,
+            })
+        : undefined;
       return (
         <TextField
           label={field.label}
@@ -78,9 +107,11 @@ function FieldView({
           hint={field.hint}
           assist={sectionType ? { context: `${sectionType} ${field.label}` } : undefined}
           disabled={translating && field.fixed === true}
+          ghost={ghost}
           onChange={(text) => onChange(withKey(value, field.key, field.optional && text === "" ? undefined : text))}
         />
       );
+    }
 
     case "boolean": {
       const id = `${field.key}-${sectionType ?? "field"}`;
@@ -246,6 +277,8 @@ function FieldView({
                     fields={field.fields}
                     sectionType={sectionType}
                     translating={translating}
+                    sectionId={sectionId}
+                    ghostContext={`${field.itemLabel.toLowerCase()} ${index + 1}`}
                     onChange={(next) => setItems(items.map((it, i) => (i === index ? next : it)))}
                   />
                 </motion.li>
