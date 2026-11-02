@@ -6,7 +6,7 @@ import { domains } from "../src/db/schema";
 import realApp from "../src/index";
 import { externalFormOrigins, parseFormOrigins } from "../src/published";
 import { hostedContentSecurityPolicy } from "../src/security";
-import { call, jsonInit, makeSite, uploadPng, type TestSite } from "./helpers";
+import { call, insertActiveDomain, jsonInit, makeSite, uploadPng, verifyContactEmail, type TestSite } from "./helpers";
 
 const HOST = "sites.shofar.io";
 const API = "https://api.build.shofar.io";
@@ -121,6 +121,7 @@ describe("error logging", () => {
     if (contact?.type === "contact") contact.email = "owner@example.org";
     await call("sec_log", `/sites/${site.id}/document`, jsonInit("PUT", doc));
     await call("sec_log", `/sites/${site.id}/publish`, { method: "POST" });
+    await verifyContactEmail(site.id, "owner@example.org");
     const res = await app(
       `https://${HOST}/${site.slug}/contact`,
       {
@@ -228,7 +229,7 @@ describe("hosted site headers", () => {
 
   it("limits HSTS to the exact host on customer domains, which may have subdomains of their own", async () => {
     const site = await publishedSite("sec_host_d", "Customer Domain Org");
-    await drizzle(env.DB).insert(domains).values({ id: "dom_sec_d", siteId: site.id, hostname: "customer-sec.org", kind: "primary" });
+    await insertActiveDomain(site.id, "customer-sec.org");
     const res = await app("https://customer-sec.org/");
     expect(res.status).toBe(200);
     expect(res.headers.get("strict-transport-security")).toBe("max-age=31536000");
@@ -333,7 +334,7 @@ describe("robots.txt and sitemap.xml", () => {
 
   it("serves them on the path form, the subdomain form and a custom domain", async () => {
     const site = await publishedSite("sec_seo_c", "Served Seo", ["es"]);
-    await drizzle(env.DB).insert(domains).values({ id: "dom_sec_seo", siteId: site.id, hostname: "served-seo.org", kind: "primary" });
+    await insertActiveDomain(site.id, "served-seo.org");
     const sitemapUrl = `https://${HOST}/${site.slug}/sitemap.xml`;
 
     for (const origin of [`https://${HOST}/${site.slug}`, `https://${site.slug}.${HOST}`, "https://served-seo.org"]) {

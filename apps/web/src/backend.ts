@@ -29,6 +29,7 @@ import {
   createApiClient,
   ApiError,
   type CreateSiteInput,
+  type ContactEmailStatus,
   type DomainKind,
   type DomainList,
   type GetToken,
@@ -61,6 +62,13 @@ export interface DomainsBackend {
   /** Asks the server to re-check verification and certificate status with Cloudflare. */
   refresh(siteId: string, domainId: string): Promise<SiteDomain>;
   remove(siteId: string, domainId: string): Promise<void>;
+}
+
+/** Double opt-in for the address the contact form delivers to. Only the API backend has it. */
+export interface ContactEmailBackend {
+  status(siteId: string, email: string): Promise<ContactEmailStatus>;
+  /** Sends (or re-sends) the verification email. */
+  verify(siteId: string, email: string): Promise<ContactEmailStatus>;
 }
 
 /** The contact form inbox. Only the API backend has it. */
@@ -119,6 +127,8 @@ export interface Backend {
   ai?: AiBackend;
   /** Present in API mode only; local mode has no hosted form, so no inbox. */
   messages?: MessagesBackend;
+  /** Present in API mode only: verification of the contact address the hosted form emails. */
+  contactEmail?: ContactEmailBackend;
   /** Present in API mode only; local mode has no hosted form, so nothing to deliver. */
   integrations?: IntegrationsBackend;
   /** Present in API mode only; local mode is a single private site with no one to share it with. */
@@ -162,6 +172,10 @@ export function createApiBackend(getToken: GetToken): Backend {
     messages: {
       list: (siteId) => api.listMessages(siteId),
       remove: (siteId, id) => api.deleteMessage(siteId, id),
+    },
+    contactEmail: {
+      status: (siteId, email) => api.contactEmailStatus(siteId, email),
+      verify: (siteId, email) => api.requestContactEmailVerification(siteId, email),
     },
     publish: (siteId) => api.publish(siteId),
     unpublish: (siteId) => api.unpublish(siteId),

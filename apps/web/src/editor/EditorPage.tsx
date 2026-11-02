@@ -33,6 +33,7 @@ import { MessagesDialog } from "./MessagesDialog";
 import { editSection, formatIssue, setTranslation } from "./documentOps";
 import { EditorHeader } from "./EditorHeader";
 import { SiteIdProvider } from "./EditorContext";
+import { ContactEmailVerification } from "./ContactEmailVerification";
 import { FieldsForm } from "./FieldsForm";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { SECTION_FIELDS, SECTION_LABELS, type Obj } from "./fields";
@@ -264,6 +265,9 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
                           onChange={(next: Obj) => editor.update((d) => editSection(d, lang, next as Section))}
                         />
                       </fieldset>
+                      {selected.type === "contact" && backend.contactEmail && !translating && !readOnly ? (
+                        <ContactEmailVerification contactEmail={backend.contactEmail} email={selected.email} customEndpoint={Boolean(selected.formEndpoint?.trim())} />
+                      ) : null}
                     </section>
                   ) : null}
                 </div>

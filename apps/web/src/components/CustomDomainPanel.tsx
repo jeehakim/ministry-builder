@@ -15,11 +15,41 @@ function errorText(err: unknown): string {
 }
 
 /** Plain-language reading of a domain's state, for the badge next to its name. */
-function describe(domain: SiteDomain): { label: string; tone: "live" | "waiting" | "problem" } {
-  if (domain.active) return { label: "Live", tone: "live" };
-  if (/timed_out|expired|deleted|inactive/.test(domain.sslStatus)) return { label: "Needs attention", tone: "problem" };
-  if (domain.verifiedAt) return { label: "Issuing certificate", tone: "waiting" };
-  return { label: "Waiting for DNS", tone: "waiting" };
+function describe(domain: SiteDomain): { label: string; tone: "live" | "waiting" | "problem"; hint: string } {
+  if (domain.active) return { label: "Live", tone: "live", hint: "The domain serves your site." };
+  if (!domain.ownershipVerifiedAt) {
+    return { label: "Waiting for TXT record", tone: "waiting", hint: "The ownership record has not been found yet. DNS changes can take a while to spread; check again in a few minutes." };
+  }
+  if (/timed_out|expired|deleted|inactive/.test(domain.sslStatus)) {
+    return { label: "Needs attention", tone: "problem", hint: "Cloudflare could not finish the certificate. Check the CNAME record, then check status again." };
+  }
+  if (domain.verifiedAt) return { label: "Issuing certificate", tone: "waiting", hint: "Cloudflare has seen the CNAME and is issuing the certificate. Check again in a few minutes." };
+  return { label: "Waiting for CNAME", tone: "waiting", hint: "Ownership is proved. Cloudflare has not seen the CNAME record yet; check again in a few minutes." };
+}
+
+/** Days until an unproved domain is removed, rounded up; null once ownership is proved. */
+function daysLeft(domain: SiteDomain): number | null {
+  if (!domain.expiresAt) return null;
+  return Math.max(0, Math.ceil((new Date(domain.expiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
+}
+
+function DnsRecord(props: { type: string; name: string; value: string; valueLabel: string }) {
+  return (
+    <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1 text-xs">
+      <dt className="text-muted-foreground">Type</dt>
+      <dd>
+        <code className="rounded-sm bg-muted px-1.5 py-0.5 font-mono">{props.type}</code>
+      </dd>
+      <dt className="text-muted-foreground">Name</dt>
+      <dd>
+        <CopyValue value={props.name} label="record name" />
+      </dd>
+      <dt className="text-muted-foreground">{props.valueLabel}</dt>
+      <dd>
+        <CopyValue value={props.value} label={`record ${props.valueLabel.toLowerCase()}`} />
+      </dd>
+    </dl>
+  );
 }
 
 function CopyValue({ value, label }: { value: string; label: string }) {
@@ -70,27 +100,25 @@ function DomainRow(props: {
       </div>
 
       {domain.active ? null : (
-        <div className="space-y-1.5 text-sm">
-          <p className="text-muted-foreground">Add this record where your domain's DNS is managed (your registrar, usually):</p>
-          <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1 text-xs">
-            <dt className="text-muted-foreground">Type</dt>
-            <dd>
-              <code className="rounded-sm bg-muted px-1.5 py-0.5 font-mono">{domain.dns.type}</code>
-            </dd>
-            <dt className="text-muted-foreground">Name</dt>
-            <dd>
-              <CopyValue value={domain.dns.name} label="record name" />
-            </dd>
-            <dt className="text-muted-foreground">Target</dt>
-            <dd>
-              <CopyValue value={domain.dns.target} label="record target" />
-            </dd>
-          </dl>
+        <div className="space-y-2.5 text-sm">
+          <p className="text-muted-foreground">Add these two records where your domain's DNS is managed (your registrar, usually):</p>
+          <div className="space-y-1">
+            <p className="text-xs font-medium">
+              1. Ownership proof{" "}
+              {domain.ownershipVerifiedAt ? <span className="font-normal text-emerald-600">(found)</span> : <span className="font-normal text-muted-foreground">(checked first)</span>}
+            </p>
+            <DnsRecord type={domain.txt.type} name={domain.txt.name} value={domain.txt.value} valueLabel="Value" />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs font-medium">2. Routing</p>
+            <DnsRecord type={domain.dns.type} name={domain.dns.name} value={domain.dns.target} valueLabel="Target" />
+          </div>
           <p className="text-xs text-muted-foreground">
-            DNS changes can take up to a day to spread. Once the record is live, the certificate is issued automatically.
+            {state.hint} DNS changes can take up to a day to spread. Once both records are live, the certificate is issued automatically.
             {domain.hostname.split(".").length === 2
               ? " If your DNS provider will not accept a CNAME on the root domain, use an ALIAS or ANAME record, or move your DNS to Cloudflare (free)."
               : ""}
+            {daysLeft(domain) !== null ? ` Without the ownership record the domain is removed from this site in ${daysLeft(domain)} day${daysLeft(domain) === 1 ? "" : "s"}.` : ""}
           </p>
         </div>
       )}
@@ -179,7 +207,7 @@ export function CustomDomainPanel({ domains, published, canManage = true }: { do
       const domain = await domains.add(siteId, value, kind);
       setState((s) => (s.kind === "ready" ? { ...s, items: [...s.items, domain] } : s));
       setHostname("");
-      toast.success(`${domain.hostname} added`, { description: "Now create the DNS record shown below it." });
+      toast.success(`${domain.hostname} added`, { description: "Now create the two DNS records shown below it, starting with the TXT record." });
     } catch (err) {
       toast.error("Could not add the domain", { description: errorText(err) });
     } finally {
@@ -192,8 +220,10 @@ export function CustomDomainPanel({ domains, published, canManage = true }: { do
     try {
       const updated = await domains.refresh(siteId, domain.id);
       replace(updated);
+      const next = describe(updated);
       if (updated.active) toast.success(`${updated.hostname} is live`);
-      else toast.info(describe(updated).label, { description: "Cloudflare has not seen the DNS record yet. Check again in a few minutes." });
+      else if (updated.ownershipVerifiedAt && !domain.ownershipVerifiedAt) toast.success("Ownership confirmed", { description: next.hint });
+      else toast.info(next.label, { description: next.hint });
     } catch (err) {
       toast.error("Could not check the domain", { description: errorText(err) });
     } finally {
@@ -222,6 +252,7 @@ export function CustomDomainPanel({ domains, published, canManage = true }: { do
         </h3>
         <p className="text-sm text-muted-foreground">
           Serve the site at your own address, with SSL handled for you. Add the main domain first, then any others that should redirect to it.
+          You prove you control each domain with a TXT record before it goes live.
         </p>
       </div>
 

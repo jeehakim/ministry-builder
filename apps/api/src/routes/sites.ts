@@ -7,6 +7,7 @@ import { loadOrgAccess, requireSiteRole } from "../access";
 import {
   aiUsage,
   assets,
+  contactEmailVerifications,
   domains,
   formSubmissions,
   integrationEvents,
@@ -286,6 +287,7 @@ siteRoutes.delete("/sites/:id", async (c) => {
     // Keep token counts for cost records, drop the site reference and the owner's text.
     db.update(aiUsage).set({ siteId: null, requestJson: null, resultJson: null }).where(eq(aiUsage.siteId, site.id)),
     db.delete(formSubmissions).where(eq(formSubmissions.siteId, site.id)),
+    db.delete(contactEmailVerifications).where(eq(contactEmailVerifications.siteId, site.id)),
     db.delete(publishEvents).where(eq(publishEvents.siteId, site.id)),
     db.delete(assets).where(eq(assets.siteId, site.id)),
     db.delete(siteVersions).where(eq(siteVersions.siteId, site.id)),

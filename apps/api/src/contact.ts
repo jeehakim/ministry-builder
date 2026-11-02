@@ -1,6 +1,7 @@
 import { SiteDocument, siteLanguages } from "@ministry/schema";
 import { and, count, eq, gte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
+import { isContactEmailVerified } from "./contactEmail";
 import { createSender } from "./email";
 import { resolveOrgSender, type OrgSenderResolution } from "./email/orgSender";
 import { contactNotification } from "./email/notification";
@@ -20,6 +21,8 @@ const MAX_BODY_BYTES = 64 * 1024;
 const SEND_TIMEOUT_MS = 10_000;
 const MAX_USER_AGENT = 300;
 const MAX_DELIVERY_ERROR = 300;
+/** Recorded instead of sending when the contact address has not confirmed it wants the site's messages. */
+export const NOT_VERIFIED_ERROR = "address not verified";
 
 // Something@something.tld with no whitespace and none of the characters that could add a second address.
 const EMAIL_PATTERN = /^[^\s@<>(),;:\\"[\]]+@[^\s@<>(),;:\\"[\]]+\.[^\s@<>(),;:\\"[\]]+$/;
@@ -192,12 +195,15 @@ export async function handleContactSubmission(
   });
 
   // The organization's own Resend account wins when it is set up. If it then fails, the message is not
-  // re-sent from the platform: their sender, their reputation, their error to fix.
+  // re-sent from the platform: their sender, their reputation, their error to fix. The platform sender,
+  // on the other hand, only emails an address that confirmed the verification link for this site.
   const org = await resolveOrgSender(env, db, site.orgId);
   const platform = createSender(env);
   const choice: OrgSenderResolution = org ?? (platform ? { sender: platform } : null);
   const deliveredVia = org ? "organization" : "platform";
-  if (choice) {
+  if (!org && platform && !(await isContactEmailVerified(db, site.id, recipient))) {
+    await db.update(formSubmissions).set({ deliveryError: NOT_VERIFIED_ERROR, deliveredVia }).where(eq(formSubmissions.id, id));
+  } else if (choice) {
     try {
       if ("error" in choice) throw new Error(choice.error);
       await withTimeout(choice.sender.send(contactNotification({ orgName: doc.meta.orgName, name, email, message, language }, recipient)), SEND_TIMEOUT_MS);
