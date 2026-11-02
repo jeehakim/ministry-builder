@@ -18,7 +18,8 @@ app.use(
   }),
 );
 
-app.get("/health", (c) => c.json({ ok: true }));
+// Reports which optional integrations are configured, never their values.
+app.get("/health", (c) => c.json({ ok: true, ai: Boolean(c.env.OPENAI_API_KEY) }));
 
 // Everything under /sites needs a signed-in user. GET /assets/* stays public.
 app.use("/sites", requireAuth);

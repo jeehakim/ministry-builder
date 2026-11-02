@@ -26,9 +26,12 @@ function formWithFile(bytes: Uint8Array, type: string, name = "f"): FormData {
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 
 describe("auth and health", () => {
-  it("serves /health without auth", async () => {
+  it("serves /health without auth and reports whether the AI key is configured", async () => {
     const res = await realApp.request("/health", {}, env);
     expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; ai: boolean };
+    expect(body.ok).toBe(true);
+    expect(typeof body.ai).toBe("boolean");
   });
 
   it("rejects /sites without a bearer token", async () => {

@@ -46,3 +46,12 @@ Set `vars.ALLOWED_ORIGIN` to `https://build.shofar.io` for production and uncomm
 | `GET /assets/*` | no | Streams from R2, cached for a year |
 
 Errors are `{ "error": string }`. A site you may not access answers 404, same as a missing one.
+
+## Secrets on the deployed Worker
+
+| Name | How to set | Used for |
+|---|---|---|
+| `CLERK_SECRET_KEY` | `npx wrangler secret put CLERK_SECRET_KEY`, or dashboard: Settings > Variables and Secrets > Add (type Secret) | Verifying Clerk session tokens |
+| `OPENAI_API_KEY` | same, name `OPENAI_API_KEY` | AI copilot (Phase 1) |
+
+`GET /health` returns `{ "ok": true, "ai": true|false }` so you can confirm the AI key is present without exposing it. Secrets added in the dashboard survive `wrangler deploy`; plain-text variables defined in `wrangler.jsonc` are the source of truth for non-secret settings.
