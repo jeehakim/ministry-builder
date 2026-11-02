@@ -4,7 +4,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { loadAuthorizedSite } from "../access";
-import { aiUsage, assets, campaigns, domains, donors, formSubmissions, gifts, integrationEvents, orgIntegrations, organizations, publishEvents, siteVersions, sites } from "../db/schema";
+import { aiUsage, assets, campaigns, contactEmailVerifications, domains, donors, formSubmissions, gifts, integrationEvents, orgIntegrations, organizations, publishEvents, siteVersions, sites } from "../db/schema";
 import { newId } from "../ids";
 import { limitsFor } from "../limits";
 import { deleteKeys, listKeys, publishedPrefix, publishedUrlFor } from "../published";
@@ -250,6 +250,7 @@ siteRoutes.delete("/sites/:id", async (c) => {
     // Keep token counts for cost records, drop the site reference and the owner's text.
     db.update(aiUsage).set({ siteId: null, requestJson: null, resultJson: null }).where(eq(aiUsage.siteId, site.id)),
     db.delete(formSubmissions).where(eq(formSubmissions.siteId, site.id)),
+    db.delete(contactEmailVerifications).where(eq(contactEmailVerifications.siteId, site.id)),
     db.delete(publishEvents).where(eq(publishEvents.siteId, site.id)),
     db.delete(assets).where(eq(assets.siteId, site.id)),
     db.delete(siteVersions).where(eq(siteVersions.siteId, site.id)),

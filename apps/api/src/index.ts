@@ -7,6 +7,7 @@ import { adminRoutes } from "./routes/admin";
 import { aiRoutes } from "./routes/ai";
 import { assetRoutes } from "./routes/assets";
 import { campaignRoutes } from "./routes/campaigns";
+import { contactEmailRoutes } from "./routes/contactEmail";
 import { domainRoutes } from "./routes/domains";
 import { integrationRoutes } from "./routes/integrations";
 import { messageRoutes } from "./routes/messages";
@@ -39,7 +40,7 @@ app.use(
 app.get("/health", (c) => c.json({ ok: true, ai: Boolean(c.env.OPENAI_API_KEY || c.env.ANTHROPIC_API_KEY) }));
 
 // Everything under /sites, /ai, /admin and /orgs needs a signed-in user (or the staff token).
-// GET /assets/* stays public.
+// GET /assets/* and GET /verify-contact/* (the link in a verification email) stay public.
 app.use("/sites", requireAuth);
 app.use("/sites/*", requireAuth);
 app.use("/ai/*", requireAuth);
@@ -53,6 +54,7 @@ app.route("/", campaignRoutes);
 app.route("/", publishRoutes);
 app.route("/", domainRoutes);
 app.route("/", messageRoutes);
+app.route("/", contactEmailRoutes);
 app.route("/", integrationRoutes);
 app.route("/", adminRoutes);
 

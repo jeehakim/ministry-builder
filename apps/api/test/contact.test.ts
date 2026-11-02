@@ -7,7 +7,8 @@ import { createSender } from "../src/email";
 import { formSubmissions } from "../src/db/schema";
 import realApp from "../src/index";
 import type { Bindings } from "../src/types";
-import { call, jsonInit, makeSite, type TestSite } from "./helpers";
+import { NOT_VERIFIED_ERROR } from "../src/contact";
+import { call, jsonInit, makeSite, verifyContactEmail, type TestSite } from "./helpers";
 
 const HOST = "sites.shofar.io";
 const db = () => drizzle(env.DB);
@@ -28,15 +29,16 @@ function freshIp(): string {
   return `203.0.113.${ipCounter}`;
 }
 
-type ContactOptions = { email?: string; es?: boolean; publish?: boolean };
+type ContactOptions = { email?: string; es?: boolean; publish?: boolean; verified?: boolean };
 
 async function contactSite(user: string, orgName: string, options: ContactOptions = {}): Promise<TestSite> {
-  const { email = "owner@example.org", es = false, publish = true } = options;
+  const { email = "owner@example.org", es = false, publish = true, verified = true } = options;
   const site = await makeSite(user, orgName);
   const doc = emptySiteDocument(orgName);
   const contact = doc.sections.find((s) => s.type === "contact");
   if (contact?.type === "contact") contact.email = email;
   expect((await call(user, `/sites/${site.id}/document`, jsonInit("PUT", doc))).status).toBe(200);
+  if (verified && email) await verifyContactEmail(site.id, email);
   if (es) expect((await call(user, `/sites/${site.id}/ai/translate`, jsonInit("POST", { language: "es" }))).status).toBe(200);
   if (publish) expect((await call(user, `/sites/${site.id}/publish`, { method: "POST" })).status).toBe(200);
   return site;
@@ -307,10 +309,40 @@ describe("contact form email delivery", () => {
     expect((await rows(site.id))[0]?.deliveredAt).toBeInstanceOf(Date);
   });
 
-  it("runs in store-only mode when no provider is configured and never calls out", async () => {
+  it("stores but does not email a message for an address that never confirmed the verification link", async () => {
+    const fetchStub = vi.fn(async () => Response.json({ id: "re_never" }));
+    vi.stubGlobal("fetch", fetchStub);
+    const site = await contactSite("mail_f", "Mail Unverified", { email: "Stranger@Example.org", verified: false });
+    const res = await submit(site, VALID, { bindings: resend });
+    expect(res.status).toBe(303);
+    expect(fetchStub).not.toHaveBeenCalled();
+    const [row] = await rows(site.id);
+    expect(row).toMatchObject({ name: VALID.name, deliveredAt: null, deliveryError: NOT_VERIFIED_ERROR });
+
+    // Verification is matched on the normalized address, so case and whitespace in the document do not matter.
+    await verifyContactEmail(site.id, "stranger@example.org");
+    expect((await submit(site, VALID, { bindings: resend })).status).toBe(303);
+    expect(fetchStub).toHaveBeenCalledTimes(1);
+    const sent = JSON.parse((fetchStub.mock.calls[0] as unknown as [string, RequestInit])[1].body as string) as { to: string[] };
+    expect(sent.to).toEqual(["Stranger@Example.org"]);
+    expect((await rows(site.id))[0]?.deliveredAt).toBeInstanceOf(Date);
+  });
+
+  it("only honours a verification for the same site", async () => {
+    const fetchStub = vi.fn(async () => Response.json({ id: "re_other" }));
+    vi.stubGlobal("fetch", fetchStub);
+    const verifiedElsewhere = await contactSite("mail_g", "Mail Verified Elsewhere", { email: "shared@example.org" });
+    const site = await contactSite("mail_g", "Mail Same Address", { email: "shared@example.org", verified: false });
+    expect(verifiedElsewhere.id).not.toBe(site.id);
+    expect((await submit(site, VALID, { bindings: resend })).status).toBe(303);
+    expect(fetchStub).not.toHaveBeenCalled();
+    expect((await rows(site.id))[0]?.deliveryError).toBe(NOT_VERIFIED_ERROR);
+  });
+
+  it("runs in store-only mode when no provider is configured and never calls out, verified or not", async () => {
     const fetchStub = vi.fn(async () => Response.json({}));
     vi.stubGlobal("fetch", fetchStub);
-    const site = await contactSite("mail_e", "Mail Store Only");
+    const site = await contactSite("mail_e", "Mail Store Only", { verified: false });
     expect(env.EMAIL_PROVIDER).toBe("none");
     expect((await submit(site, VALID)).status).toBe(303);
     expect(fetchStub).not.toHaveBeenCalled();

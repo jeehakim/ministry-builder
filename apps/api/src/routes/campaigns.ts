@@ -29,7 +29,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { isSiteAssetKey, loadAuthorizedOrg, loadAuthorizedSite } from "../access";
 import { giftTotals, loadCampaigns, parseGiftCsv, toCampaign, toGift, totalsFor } from "../campaigns";
-import { aiUsage, campaigns, donors, gifts, sites, type CampaignRow, type Site } from "../db/schema";
+import { campaigns, donors, gifts, sites, type CampaignRow, type Site } from "../db/schema";
 import { createSender } from "../email";
 import { resolveOrgSender, type OrgSenderResolution } from "../email/orgSender";
 import { thankYouEmail } from "../email/thankYou";
@@ -37,7 +37,7 @@ import { newId } from "../ids";
 import { errorFields, logError, requestIdOf } from "../log";
 import { publicCampaignUrl } from "../published";
 import type { AppEnv } from "../types";
-import { callProvider, currentDocument, guard, parseBody, usageRow } from "./ai";
+import { callProvider, currentDocument, finishUsage, guard, parseBody } from "./ai";
 
 type Ctx = Context<AppEnv>;
 
@@ -430,7 +430,7 @@ campaignRoutes.post("/sites/:id/campaigns/:cid/ai/story", campaignBody, async (c
   const campaign = toCampaign(loaded.row);
   const language = knownLanguage(await currentDocument(db, loaded.site), body.language);
 
-  const result = await callProvider(c, "campaign_story", () =>
+  const called = await callProvider(c, g.site.id, "campaign_story", () =>
     g.provider.campaignStory({
       brief: body.brief,
       language,
@@ -439,14 +439,13 @@ campaignRoutes.post("/sites/:id/campaigns/:cid/ai/story", campaignBody, async (c
       deadline: deadlineText(campaign.deadline),
     }),
   );
-  if (result instanceof Response) return result;
+  if (called instanceof Response) return called;
+  const { result, usageId } = called;
 
-  await db.insert(aiUsage).values(
-    usageRow(c.var.user.id, g.site.id, "campaign_story", result.usage, {
-      request: { campaignId: campaign.id, brief: body.brief, language },
-      result: { title: result.title, summary: result.summary, story: result.story },
-    }),
-  );
+  await finishUsage(db, usageId, result.usage, {
+    request: { campaignId: campaign.id, brief: body.brief, language },
+    result: { title: result.title, summary: result.summary, story: result.story },
+  });
   const response: AiCampaignStoryResponse = { title: result.title, summary: result.summary, story: result.story };
   return c.json(response);
 });
@@ -462,17 +461,16 @@ campaignRoutes.post("/sites/:id/campaigns/:cid/ai/thank-you", campaignBody, asyn
   const campaign = toCampaign(loaded.row);
   const language = knownLanguage(await currentDocument(db, loaded.site), body.language);
 
-  const result = await callProvider(c, "thank_you", () =>
+  const called = await callProvider(c, g.site.id, "thank_you", () =>
     g.provider.thankYou({ campaignTitle: campaign.title, story: campaign.story, orgName: g.orgName, language, notes: body.notes }),
   );
-  if (result instanceof Response) return result;
+  if (called instanceof Response) return called;
+  const { result, usageId } = called;
 
-  await db.insert(aiUsage).values(
-    usageRow(c.var.user.id, g.site.id, "thank_you", result.usage, {
-      request: { campaignId: campaign.id, notes: body.notes, language },
-      result: { message: result.message },
-    }),
-  );
+  await finishUsage(db, usageId, result.usage, {
+    request: { campaignId: campaign.id, notes: body.notes, language },
+    result: { message: result.message },
+  });
   const response: AiThankYouResponse = { message: result.message };
   return c.json(response);
 });

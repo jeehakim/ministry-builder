@@ -7,7 +7,7 @@ import { decryptSecret } from "../src/crypto";
 import { formSubmissions, integrationEvents, orgIntegrations } from "../src/db/schema";
 import realApp from "../src/index";
 import { MAX_KEY_ATTEMPTS_PER_HOUR, MAX_TEST_EMAILS_PER_HOUR } from "../src/routes/integrations";
-import { call, jsonInit, makeSite, type TestSite } from "./helpers";
+import { call, jsonInit, makeSite, verifyContactEmail, type TestSite } from "./helpers";
 
 const db = () => drizzle(env.DB);
 const KEY = "re_Abc12345_SecretValueK4Q2";
@@ -552,6 +552,8 @@ describe("contact form delivery through the organization's Resend", () => {
     if (contact?.type === "contact") contact.email = "pastor@church.example";
     expect((await call(user, `/sites/${site.id}/document`, jsonInit("PUT", doc))).status).toBe(200);
     expect((await call(user, `/sites/${site.id}/publish`, { method: "POST" })).status).toBe(200);
+    // The platform sender only emails a verified address; the organization's own sender is not gated.
+    await verifyContactEmail(site.id, "pastor@church.example");
     return site;
   }
 

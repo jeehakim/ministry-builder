@@ -27,14 +27,18 @@ async function upload(user: string, siteId: string, bindings: object): Promise<R
 
 describe("limitsFor", () => {
   it("uses the defaults when a var is missing, zero, negative or not a number", () => {
-    const defaults = { maxSitesPerUser: 10, maxSiteStorageBytes: 100 * 1024 * 1024, maxVersionsPerSite: 500, maxPublishesPerHour: 20 };
+    const defaults = { maxSitesPerUser: 10, maxSiteStorageBytes: 100 * 1024 * 1024, maxVersionsPerSite: 500, maxPublishesPerHour: 20, maxDomainsPerSite: 3, maxDomainsPerUser: 10 };
     expect(limitsFor({})).toEqual(defaults);
     expect(limitsFor({ MAX_SITES_PER_USER: "0", MAX_SITE_STORAGE_BYTES: "-5", MAX_VERSIONS_PER_SITE: "lots", MAX_PUBLISHES_PER_HOUR: "" })).toEqual(defaults);
-    expect(limitsFor({ MAX_SITES_PER_USER: "3", MAX_SITE_STORAGE_BYTES: "1000", MAX_VERSIONS_PER_SITE: "60", MAX_PUBLISHES_PER_HOUR: "2" })).toEqual({
+    expect(
+      limitsFor({ MAX_SITES_PER_USER: "3", MAX_SITE_STORAGE_BYTES: "1000", MAX_VERSIONS_PER_SITE: "60", MAX_PUBLISHES_PER_HOUR: "2", MAX_DOMAINS_PER_SITE: "1", MAX_DOMAINS_PER_USER: "4" }),
+    ).toEqual({
       maxSitesPerUser: 3,
       maxSiteStorageBytes: 1000,
       maxVersionsPerSite: 60,
       maxPublishesPerHour: 2,
+      maxDomainsPerSite: 1,
+      maxDomainsPerUser: 4,
     });
   });
 });
