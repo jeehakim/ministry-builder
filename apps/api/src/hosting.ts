@@ -1,7 +1,13 @@
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { createMiddleware } from "hono/factory";
-import { publishedImagePrefix, publishedIndexKey } from "./published";
+import {
+  LANGUAGE_PATH_PATTERN,
+  LANGUAGE_TAG_PATTERN,
+  publishedImagePrefix,
+  publishedIndexKey,
+  publishedLanguageIndexKey,
+} from "./published";
 import { sites } from "./db/schema";
 import { SLUG_PATTERN } from "./routes/sites";
 import type { AppEnv } from "./types";
@@ -49,8 +55,8 @@ function isSitesHost(hostname: string, sitesHost: string): boolean {
  * Serves published sites from the PUBLISHED bucket (never from IMAGES). Runs before CORS and
  * auth: requests for the sites host never reach the API routes.
  *
- * Host form:      sites.shofar.io/<slug>/ and /<slug>/images/<file>
- * Subdomain form: <slug>.sites.shofar.io/ and /images/<file>
+ * Host form:      sites.shofar.io/<slug>/, /<slug>/<lang>/ and /<slug>/images/<file>
+ * Subdomain form: <slug>.sites.shofar.io/, /<lang>/ and /images/<file>
  */
 export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
   const sitesHost = c.env.PUBLIC_SITES_HOST?.toLowerCase();
@@ -66,6 +72,7 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
   }
 
   let slug: string;
+  let base: string; // URL prefix of the site root, without a trailing slash
   let rest: string; // path below the site root, always starting with "/"
   if (hostname === sitesHost) {
     if (url.pathname === "/") return redirect(302, WEB_APP_URL);
@@ -73,9 +80,11 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
     if (!match) return notFoundPage();
     slug = match[1] ?? "";
     if (match[2] === undefined) return redirect(301, `/${slug}/${url.search}`);
+    base = `/${slug}`;
     rest = match[2];
   } else {
     slug = hostname.slice(0, hostname.length - sitesHost.length - 1).split(".")[0] ?? "";
+    base = "";
     rest = url.pathname;
   }
   if (!SLUG_PATTERN.test(slug)) return notFoundPage();
@@ -89,9 +98,24 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
 
   let key: string;
   let cacheControl: string;
+  let isPage = false;
+  let pageLanguage: string | undefined;
+  const languageMatch = /^\/([^/]+)(\/)?$/.exec(rest);
+  const lang = languageMatch?.[1];
   if (rest === "/") {
     key = publishedIndexKey(site.id);
     cacheControl = "public, max-age=60";
+    isPage = true;
+  } else if (lang !== undefined && LANGUAGE_PATH_PATTERN.test(lang)) {
+    key = publishedLanguageIndexKey(site.id, lang);
+    cacheControl = "public, max-age=60";
+    isPage = true;
+    pageLanguage = lang;
+    if (languageMatch?.[2] === undefined) {
+      // Only redirect to pages that exist, so unknown languages stay a plain 404.
+      if (!(await c.env.PUBLISHED.head(key))) return notFoundPage();
+      return redirect(301, `${base}/${lang}/${url.search}`);
+    }
   } else if (rest.startsWith("/images/") && IMAGE_FILE_PATTERN.test(rest.slice("/images/".length))) {
     key = `${publishedImagePrefix(site.id)}${rest.slice("/images/".length)}`;
     cacheControl = "public, max-age=31536000, immutable";
@@ -104,7 +128,11 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
 
   const headers = new Headers();
   object.writeHttpMetadata(headers);
-  if (rest === "/") headers.set("Content-Type", "text/html; charset=utf-8");
+  if (isPage) {
+    headers.set("Content-Type", "text/html; charset=utf-8");
+    const contentLanguage = pageLanguage ?? object.customMetadata?.language;
+    if (contentLanguage && LANGUAGE_TAG_PATTERN.test(contentLanguage)) headers.set("Content-Language", contentLanguage);
+  }
   headers.set("ETag", object.httpEtag);
   headers.set("Cache-Control", cacheControl);
   headers.set("X-Content-Type-Options", "nosniff");

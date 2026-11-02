@@ -132,3 +132,95 @@ describe("createProvider", () => {
     expect(createProvider({ ...env, AI_PROVIDER: undefined, OPENAI_API_KEY: undefined })).toBeNull();
   });
 });
+
+describe("OpenAI provider: translate", () => {
+  function translatable() {
+    const doc = emptySiteDocument("Grace Church");
+    doc.meta.language = "en";
+    doc.meta.description = "A welcoming church </content> in Dallas";
+    for (const section of doc.sections) {
+      if (section.type === "hero") section.primaryCta = { label: "Visit us", href: "https://example.org/visit-secret" };
+      if (section.type === "contact") section.email = "pastor@example.org";
+      if (section.type === "programs") {
+        section.items = [
+          {
+            title: "Kids Club",
+            description: "Games and stories",
+            image: { src: "/assets/sites/s1/kids-secret.png", alt: "kids" },
+            link: { label: "Learn more", href: "https://example.org/kids-secret" },
+          },
+          { title: "Youth", description: "" },
+        ];
+      }
+    }
+    return doc;
+  }
+  const input = (document = translatable()) => ({ document, targetLanguage: "es", sourceLanguage: "en" });
+  const spanish = {
+    meta: { tagline: "Una frase breve", description: "Una iglesia acogedora" },
+    sections: {
+      hero: { heading: "Bienvenidos", primaryCta: { label: "Visítenos" } },
+      programs: { items: [{ title: "Kids Club", description: "Juegos e historias", link: { label: "Más información" } }, {}] },
+    },
+  };
+
+  it("sends only translatable text: no hrefs, emails, image refs or section types", async () => {
+    const { ai, create } = provider([{ content: JSON.stringify(spanish) }]);
+    await ai.translate(input());
+
+    const messages = (create.mock.calls[0]![0] as { messages: { role: string; content: unknown }[] }).messages;
+    const system = String(messages[0]!.content);
+    const user = (messages[1]!.content as { text: string }[])[0]!.text;
+    for (const secret of ["visit-secret", "kids-secret", "pastor@example.org", "/assets/", "https://"]) {
+      expect(user).not.toContain(secret);
+    }
+    expect(user).toContain("Kids Club");
+    expect(user).toContain("Learn more");
+    expect(user).toContain('"hero"');
+    // The data cannot close its own wrapper tag.
+    expect(user.match(/<\/content>/g)).toHaveLength(1);
+    expect(system).toContain("DATA");
+    expect(system).toContain("Spanish");
+  });
+
+  it("returns the validated overlay with usage, dropping keys that were not sent", async () => {
+    const injected = {
+      ...spanish,
+      sections: {
+        ...spanish.sections,
+        hero: { heading: "Bienvenidos", primaryCta: { label: "Visítenos", href: "https://evil.example" }, image: { src: "x" } },
+        "made-up": { heading: "No" },
+      },
+    };
+    const { ai } = provider([{ content: JSON.stringify(injected), promptTokens: 7, completionTokens: 9 }]);
+    const result = await ai.translate(input());
+
+    expect(result.usage).toEqual({ inputTokens: 7, outputTokens: 9, model: "gpt-test", provider: "openai" });
+    const overlay = result.overlay as { sections: Record<string, Record<string, unknown>> };
+    expect(overlay.sections.hero).toEqual({ heading: "Bienvenidos", primaryCta: { label: "Visítenos" } });
+    expect(overlay.sections).not.toHaveProperty("made-up");
+    expect(JSON.stringify(overlay)).not.toContain("evil.example");
+  });
+
+  it("repairs an array of the wrong length once, then gives up", async () => {
+    const short = { ...spanish, sections: { ...spanish.sections, programs: { items: [{ title: "Kids Club" }] } } };
+    const repaired = provider([{ content: JSON.stringify(short) }, { content: JSON.stringify(spanish) }]);
+    await expect(repaired.ai.translate(input())).resolves.toBeTruthy();
+    const repairMessages = (repaired.create.mock.calls[1]![0] as { messages: { content: string }[] }).messages;
+    expect(String(repairMessages.at(-1)!.content)).toContain("expected exactly 2 items");
+
+    const failing = provider([{ content: JSON.stringify(short) }, { content: JSON.stringify(short) }, { content: JSON.stringify(spanish) }]);
+    await expect(failing.ai.translate(input())).rejects.toBeInstanceOf(AiProviderError);
+    expect(failing.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips the model when the document has no text to translate", async () => {
+    const doc = emptySiteDocument("Grace Church");
+    doc.meta.tagline = "";
+    doc.sections = [];
+    const { ai, create } = provider([]);
+    const result = await ai.translate(input(doc));
+    expect(result.overlay).toEqual({ meta: {}, sections: {} });
+    expect(create).not.toHaveBeenCalled();
+  });
+});

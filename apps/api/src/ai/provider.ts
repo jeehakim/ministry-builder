@@ -1,4 +1,4 @@
-import type { Theme } from "@ministry/schema";
+import type { SiteDocument, Theme } from "@ministry/schema";
 
 /** What one provider call consumed. Written to `ai_usage` by the routes. */
 export type AiCallUsage = {
@@ -40,12 +40,22 @@ export type AltTextInput = {
   orgName: string;
 };
 
+export type TranslateInput = {
+  document: SiteDocument;
+  /** Code of the language to produce, e.g. "es". */
+  targetLanguage: string;
+  /** Code of the document's primary language. */
+  sourceLanguage: string;
+};
+
 export interface AiProvider {
   /** `document` is unvalidated JSON; the route validates it against `SiteDocument`. */
   draft(input: DraftInput): Promise<{ variations: { label: string; document: unknown }[]; usage: AiCallUsage }>;
   rewrite(input: RewriteInput): Promise<{ text: string; usage: AiCallUsage }>;
   theme(input: ThemeInput): Promise<{ theme: Theme; rationale: string; usage: AiCallUsage }>;
   altText(input: AltTextInput): Promise<{ alt: string; usage: AiCallUsage }>;
+  /** `overlay` is unvalidated JSON; the route validates it against `TranslationOverlay`. */
+  translate(input: TranslateInput): Promise<{ overlay: unknown; usage: AiCallUsage }>;
 }
 
 /** A provider or network failure. Routes answer 502 with `message`; `detail` is only logged. */

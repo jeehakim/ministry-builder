@@ -157,6 +157,153 @@ describe("hosting handler", () => {
   });
 });
 
+/** A Korean-primary site with a hero image, translated to English by the (fake) AI route. */
+async function translatedSite(user: string, orgName: string) {
+  const site = await makeSite(user, orgName);
+  const image = await uploadPng(user, site.id);
+  const doc = emptySiteDocument(orgName);
+  doc.meta.language = "ko";
+  doc.meta.tagline = "작은 교회";
+  const hero = doc.sections.find((s) => s.type === "hero");
+  if (hero?.type === "hero") hero.image = { src: `/assets/${image.key}`, alt: "Hero" };
+  expect((await call(user, `/sites/${site.id}/document`, jsonInit("PUT", doc))).status).toBe(200);
+  expect((await call(user, `/sites/${site.id}/ai/translate`, jsonInit("POST", { language: "en" }))).status).toBe(200);
+  return { site, doc, file: image.key.slice(image.key.lastIndexOf("/") + 1) };
+}
+
+async function pageText(siteId: string, path: string): Promise<string> {
+  const object = await env.PUBLISHED.get(`published/${siteId}/${path}`);
+  expect(object, path).not.toBeNull();
+  return object!.text();
+}
+
+describe("multi-language publish", () => {
+  it("writes the primary page at the root and each other language under /<lang>/, sharing one images folder", async () => {
+    const { site, file } = await translatedSite("lang_a", "Language Org");
+    const res = await call("lang_a", `/sites/${site.id}/publish`, { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { url: string }).url).toBe(`https://${HOST}/${site.slug}/`);
+
+    const primary = await pageText(site.id, "index.html");
+    expect(primary).toContain('<html lang="ko">');
+    expect(primary).toContain("작은 교회");
+    expect(primary).not.toContain("[en] ");
+    expect(primary).toContain(`images/${file}`);
+    expect(primary).not.toContain(`../images/${file}`);
+    expect(primary).toContain('<link rel="alternate" hreflang="ko" href="./">');
+    expect(primary).toContain('<link rel="alternate" hreflang="en" href="en/">');
+    expect(primary).toContain('href="en/"');
+
+    const english = await pageText(site.id, "en/index.html");
+    expect(english).toContain('<html lang="en">');
+    expect(english).toContain("[en] 작은 교회");
+    expect(english).toContain(`../images/${file}`);
+    expect(english).not.toContain(`src="images/${file}"`);
+    expect(english).toContain('<link rel="alternate" hreflang="ko" href="../">');
+    expect(english).toContain('<link rel="alternate" hreflang="en" href="./">');
+    expect(english).toContain("English");
+    expect(english).toContain("한국어");
+
+    const englishObject = await env.PUBLISHED.head(`published/${site.id}/en/index.html`);
+    expect(englishObject?.httpMetadata?.contentType).toBe("text/html; charset=utf-8");
+    const images = await env.PUBLISHED.list({ prefix: `published/${site.id}/images/` });
+    expect(images.objects.map((o) => o.key)).toEqual([`published/${site.id}/images/${file}`]);
+    expect(await env.PUBLISHED.head(`published/${site.id}/en/images/${file}`)).toBeNull();
+  });
+
+  it("links every language from every page, relative to the page being rendered", async () => {
+    const { site, doc } = await translatedSite("lang_b", "Three Languages");
+    expect((await call("lang_b", `/sites/${site.id}/ai/translate`, jsonInit("POST", { language: "es" }))).status).toBe(200);
+    expect((await call("lang_b", `/sites/${site.id}/publish`, { method: "POST" })).status).toBe(200);
+
+    const english = await pageText(site.id, "en/index.html");
+    expect(english).toContain('<link rel="alternate" hreflang="ko" href="../">');
+    expect(english).toContain('<link rel="alternate" hreflang="es" href="../es/">');
+    expect(english).toContain('<link rel="alternate" hreflang="en" href="./">');
+    const spanish = await pageText(site.id, "es/index.html");
+    expect(spanish).toContain('<link rel="alternate" hreflang="en" href="../en/">');
+    expect(spanish).toContain("Español");
+    expect(await pageText(site.id, "index.html")).toContain('<link rel="alternate" hreflang="es" href="es/">');
+    expect(doc.meta.language).toBe("ko");
+  });
+
+  it("removes pages of languages that left the document, skips unsafe language codes and adds no switcher to single-language sites", async () => {
+    const { site, doc } = await translatedSite("lang_c", "Shrinking Org");
+    await env.PUBLISHED.put(`published/${site.id}/fr/index.html`, "old french");
+    await env.PUBLISHED.put(`published/${site.id}/not a page.txt`, "keep");
+    expect((await call("lang_c", `/sites/${site.id}/publish`, { method: "POST" })).status).toBe(200);
+    expect(await env.PUBLISHED.head(`published/${site.id}/en/index.html`)).not.toBeNull();
+    expect(await env.PUBLISHED.head(`published/${site.id}/fr/index.html`)).toBeNull();
+
+    const single = { ...doc, meta: { ...doc.meta, languages: ["../evil", "EN"] } };
+    expect((await call("lang_c", `/sites/${site.id}/document`, jsonInit("PUT", single))).status).toBe(200);
+    expect((await call("lang_c", `/sites/${site.id}/publish`, { method: "POST" })).status).toBe(200);
+
+    expect(await env.PUBLISHED.head(`published/${site.id}/en/index.html`)).toBeNull();
+    const keys = (await env.PUBLISHED.list({ prefix: `published/${site.id}/` })).objects.map((o) => o.key);
+    expect(keys.filter((k) => k.endsWith("index.html"))).toEqual([`published/${site.id}/index.html`]);
+    expect(keys.some((k) => k.includes(".."))).toBe(false);
+    expect(await env.PUBLISHED.head(`published/${site.id}/not a page.txt`)).not.toBeNull();
+    expect(await pageText(site.id, "index.html")).not.toContain("hreflang");
+  });
+});
+
+describe("hosting handler: languages", () => {
+  it("serves /<slug>/<lang>/ with the page's language and the primary page's cache headers", async () => {
+    const { site, file } = await translatedSite("host_lang_a", "Hosted Languages");
+    await call("host_lang_a", `/sites/${site.id}/publish`, { method: "POST" });
+
+    const english = await hosted(`https://${HOST}/${site.slug}/en/`);
+    expect(english.status).toBe(200);
+    expect(english.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(english.headers.get("cache-control")).toBe("public, max-age=60");
+    expect(english.headers.get("content-language")).toBe("en");
+    expect(english.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await english.text()).toContain("[en] ");
+
+    const primary = await hosted(`https://${HOST}/${site.slug}/`);
+    expect(primary.headers.get("content-language")).toBe("ko");
+
+    // The shared images folder is reachable from the language page's ../images/ path.
+    const image = await hosted(`https://${HOST}/${site.slug}/images/${file}`);
+    expect(image.status).toBe(200);
+    expect(image.headers.get("content-language")).toBeNull();
+
+    const etag = english.headers.get("etag") ?? "";
+    const revalidated = await hosted(`https://${HOST}/${site.slug}/en/`, { headers: { "if-none-match": etag } });
+    expect(revalidated.status).toBe(304);
+
+    const sub = await hosted(`https://${site.slug}.${HOST}/en/`);
+    expect(sub.status).toBe(200);
+    expect(await sub.text()).toContain("[en] ");
+  });
+
+  it("redirects /<slug>/<lang> to the slash form and answers 404 for languages that were not published", async () => {
+    const { site } = await translatedSite("host_lang_b", "Redirect Languages");
+    await call("host_lang_b", `/sites/${site.id}/publish`, { method: "POST" });
+
+    const redirected = await hosted(`https://${HOST}/${site.slug}/en?ref=x`, { redirect: "manual" });
+    expect(redirected.status).toBe(301);
+    expect(redirected.headers.get("location")).toBe(`/${site.slug}/en/?ref=x`);
+    const sub = await hosted(`https://${site.slug}.${HOST}/en`, { redirect: "manual" });
+    expect(sub.status).toBe(301);
+    expect(sub.headers.get("location")).toBe("/en/");
+
+    for (const url of [
+      `https://${HOST}/${site.slug}/fr/`,
+      `https://${HOST}/${site.slug}/fr`,
+      `https://${HOST}/${site.slug}/EN/`,
+      `https://${HOST}/${site.slug}/english/`,
+      `https://${HOST}/${site.slug}/en/images/x.png`,
+      `https://${HOST}/${site.slug}/en/index.html`,
+    ]) {
+      const res = await hosted(url, { redirect: "manual" });
+      expect(res.status, url).toBe(404);
+      expect(res.headers.get("content-type"), url).toBe("text/html; charset=utf-8");
+    }
+  });
+});
+
 describe("unpublish", () => {
   it("removes every published object, returns the site to draft and stops serving it", async () => {
     const { site } = await siteWithImage("unpub_a", "Unpublish Org");

@@ -14,6 +14,17 @@ export function publishedIndexKey(siteId: string): string {
   return `${publishedPrefix(siteId)}index.html`;
 }
 
+/** A URL path segment that names a language page: "en", "es", "zh-Hant". Anything else is not a language. */
+export const LANGUAGE_PATH_PATTERN = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/;
+
+/** The page of a non-primary language. Callers must check `LANGUAGE_PATH_PATTERN` first. */
+export function publishedLanguageIndexKey(siteId: string, lang: string): string {
+  return `${publishedPrefix(siteId)}${lang}/index.html`;
+}
+
+/** Safe to send as a Content-Language header value. */
+export const LANGUAGE_TAG_PATTERN = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
+
 export function publishedImagePrefix(siteId: string): string {
   return `${publishedPrefix(siteId)}images/`;
 }

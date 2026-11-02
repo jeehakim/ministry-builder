@@ -1,6 +1,6 @@
 import type { ImageRef } from "@ministry/schema";
-import { SiteDocument } from "@ministry/schema";
-import { renderSite } from "@ministry/templates";
+import { languageName, localizeDocument, SiteDocument, siteLanguages } from "@ministry/schema";
+import { renderSite, type RenderOptions } from "@ministry/templates";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
@@ -8,9 +8,12 @@ import { isSiteAssetKey, loadAuthorizedSite } from "../access";
 import { siteVersions, sites } from "../db/schema";
 import {
   deleteKeys,
+  LANGUAGE_PATH_PATTERN,
+  LANGUAGE_TAG_PATTERN,
   listKeys,
   publishedImagePrefix,
   publishedIndexKey,
+  publishedLanguageIndexKey,
   publishedPrefix,
   publishedUrlFor,
 } from "../published";
@@ -25,6 +28,20 @@ const ABSOLUTE_URL = /^(?:https?:)?\/\//i;
 /** The IMAGES key an image ref points at: the ref's src without a leading "/assets/". */
 function imageKey(ref: ImageRef): string {
   return ref.src.replace(/^\/assets\//, "");
+}
+
+type LanguageLink = NonNullable<RenderOptions["languageLinks"]>[number];
+
+/** Switcher entries as seen from the page of `current`: the primary page is the site root, the others sit one level down. */
+function languageLinksFor(languages: string[], primary: string, current: string): LanguageLink[] {
+  if (languages.length < 2) return [];
+  return languages.map((code) => {
+    let href: string;
+    if (code === current) href = "./";
+    else if (current === primary) href = `${code}/`;
+    else href = code === primary ? "../" : `../${code}/`;
+    return { code, label: languageName(code), href, current: code === current };
+  });
 }
 
 export const publishRoutes = new Hono<AppEnv>();
@@ -43,10 +60,23 @@ publishRoutes.post("/sites/:id/publish", async (c) => {
   const parsed = version ? SiteDocument.safeParse(JSON.parse(version.document)) : null;
   if (!parsed?.success) return c.json({ error: "Current version is not a valid site document" }, 409);
 
-  // Local images are copied next to index.html; absolute URLs are left as the author wrote them.
-  const { html, images } = renderSite(parsed.data, {
-    imageUrl: (ref) => (ABSOLUTE_URL.test(ref.src) ? ref.src : `images/${basename(ref.src)}`),
+  // The primary language is the site root; every other language is a sub-page. A language that
+  // is not a plain code would become an odd object key, so it is skipped rather than published.
+  const doc = parsed.data;
+  const primary = doc.meta.language;
+  const languages = siteLanguages(doc).filter((lang) => lang === primary || LANGUAGE_PATH_PATTERN.test(lang));
+
+  // Local images are copied once under images/; absolute URLs are left as the author wrote them.
+  const pages = languages.map((lang) => {
+    const imagesDir = lang === primary ? "images/" : "../images/";
+    const key = lang === primary ? publishedIndexKey(site.id) : publishedLanguageIndexKey(site.id, lang);
+    const rendered = renderSite(localizeDocument(doc, lang), {
+      imageUrl: (ref) => (ABSOLUTE_URL.test(ref.src) ? ref.src : `${imagesDir}${basename(ref.src)}`),
+      languageLinks: languageLinksFor(languages, primary, lang),
+    });
+    return { lang, key, html: rendered.html, images: rendered.images };
   });
+  const images = pages.flatMap((page) => page.images);
 
   const imagePrefix = publishedImagePrefix(site.id);
   const keep = new Set<string>();
@@ -64,11 +94,22 @@ publishRoutes.post("/sites/:id/publish", async (c) => {
     keep.add(destKey);
   }
 
-  await c.env.PUBLISHED.put(publishedIndexKey(site.id), html, {
-    httpMetadata: { contentType: "text/html; charset=utf-8" },
-  });
+  for (const page of pages) {
+    await c.env.PUBLISHED.put(page.key, page.html, {
+      httpMetadata: { contentType: "text/html; charset=utf-8" },
+      // Lets the hosting handler answer with Content-Language without reading the page.
+      ...(LANGUAGE_TAG_PATTERN.test(page.lang) ? { customMetadata: { language: page.lang } } : {}),
+    });
+  }
 
-  const stale = (await listKeys(c.env.PUBLISHED, imagePrefix)).filter((key) => !keep.has(key));
+  // Stale images, and language pages of languages that are no longer in the document.
+  const written = new Set(pages.map((page) => page.key));
+  const sitePrefix = publishedPrefix(site.id);
+  const stale = (await listKeys(c.env.PUBLISHED, sitePrefix)).filter((key) => {
+    if (key.startsWith(imagePrefix)) return !keep.has(key);
+    const rest = key.slice(sitePrefix.length);
+    return /^[^/]+\/index\.html$/.test(rest) && !written.has(key);
+  });
   await deleteKeys(c.env.PUBLISHED, stale);
 
   const publishedAt = new Date();
