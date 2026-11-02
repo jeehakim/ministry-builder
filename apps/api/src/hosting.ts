@@ -17,6 +17,7 @@ import {
 import { handleContactSubmission } from "./contact";
 import { domains, sites } from "./db/schema";
 import { errorFields, logError, requestIdOf } from "./log";
+import { isDomainActive } from "./routes/domains";
 import { SLUG_PATTERN } from "./routes/sites";
 import { hostedContentSecurityPolicy, withHostedHeaders } from "./security";
 import type { AppEnv } from "./types";
@@ -147,16 +148,27 @@ async function serveSiteFile(c: Context<AppEnv>, siteId: string, base: string, r
 /**
  * A customer domain attached through Cloudflare for SaaS. The primary domain serves the site at "/";
  * a redirect domain answers 301 to the primary (or to the site's sites-host address when there is none).
+ * A domain row that is not yet active (ownership unproved, hostname pending or certificate not deployed)
+ * answers 404 like an unknown site: nothing is served on a hostname nobody has proved they control.
  */
 async function serveCustomDomain(c: Context<AppEnv>, url: URL, hostname: string): Promise<Response | null> {
   const db = drizzle(c.env.DB);
   const [match] = await db
-    .select({ siteId: domains.siteId, kind: domains.kind, slug: sites.slug, status: sites.status })
+    .select({
+      siteId: domains.siteId,
+      kind: domains.kind,
+      ownershipVerifiedAt: domains.ownershipVerifiedAt,
+      verifiedAt: domains.verifiedAt,
+      sslStatus: domains.sslStatus,
+      slug: sites.slug,
+      status: sites.status,
+    })
     .from(domains)
     .innerJoin(sites, eq(domains.siteId, sites.id))
     .where(eq(domains.hostname, hostname))
     .limit(1);
   if (!match) return null;
+  if (!isDomainActive(match)) return notFoundPage();
 
   if (url.pathname === "/contact") {
     if (match.kind === "redirect") return redirect(301, await primaryLocation(c, match, url));
@@ -170,14 +182,14 @@ async function serveCustomDomain(c: Context<AppEnv>, url: URL, hostname: string)
   return serveSiteFile(c, match.siteId, "", url.pathname, url.search);
 }
 
-/** Where a redirect domain sends a request: the primary domain with the path kept, or the site's sites-host address. */
+/** Where a redirect domain sends a request: the live primary domain with the path kept, or the site's sites-host address. */
 async function primaryLocation(c: Context<AppEnv>, site: { siteId: string; slug: string }, url: URL): Promise<string> {
   const [primary] = await drizzle(c.env.DB)
-    .select({ hostname: domains.hostname })
+    .select({ hostname: domains.hostname, ownershipVerifiedAt: domains.ownershipVerifiedAt, verifiedAt: domains.verifiedAt, sslStatus: domains.sslStatus })
     .from(domains)
     .where(and(eq(domains.siteId, site.siteId), eq(domains.kind, "primary")))
     .limit(1);
-  return primary ? `https://${primary.hostname}${url.pathname}${url.search}` : `https://${c.env.PUBLIC_SITES_HOST}/${site.slug}/`;
+  return primary && isDomainActive(primary) ? `https://${primary.hostname}${url.pathname}${url.search}` : `https://${c.env.PUBLIC_SITES_HOST}/${site.slug}/`;
 }
 
 /**

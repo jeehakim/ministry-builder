@@ -125,7 +125,13 @@ export const SECTION_FIELDS: Record<SectionType, FieldSpec[]> = {
   ],
   contact: [
     heading,
-    { kind: "text", key: "email", label: "Email", fixed: true, hint: "Messages from the contact form are delivered here. Kept private unless you show it below." },
+    {
+      kind: "text",
+      key: "email",
+      label: "Email",
+      fixed: true,
+      hint: "Messages from the contact form are delivered here once the address is verified (see below). Kept private unless you show it on the page.",
+    },
     { kind: "boolean", key: "showEmail", label: "Show the email address on the page", hint: "Off keeps it private; visitors use the form instead. On exposes it to spam scrapers." },
     { kind: "text", key: "phone", label: "Phone", fixed: true },
     { kind: "text", key: "address", label: "Address", multiline: true },

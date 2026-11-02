@@ -53,10 +53,13 @@ Set `vars.ALLOWED_ORIGIN` to `https://build.shofar.io` for production and uncomm
 | `POST /sites/:id/ai/translate` | owner or admin | `AiTranslateRequest` -> `{ language, overlay }`; 400 for the primary language; saves the overlay into `translations[language]`, adds the language to `meta.languages` and moves the current version |
 | `POST /sites/:id/publish` | owner or admin | Renders the current version into the `PUBLISHED` bucket (pages, thank-you pages, `robots.txt`, `sitemap.xml`); returns `{ url, publishedAt }`. 429 with `Retry-After` past `MAX_PUBLISHES_PER_HOUR` |
 | `POST /sites/:id/unpublish` | owner or admin | Removes the published objects; site returns to `draft` |
-| `GET /sites/:id/domains` | owner or admin | `{ domains, cnameTarget, enabled }`; each domain has `hostname`, `kind`, `sslStatus`, `verifiedAt`, `active` and the `dns` record to create |
-| `POST /sites/:id/domains` | owner or admin | `{ hostname, kind?: "primary" \| "redirect" }`; creates a Cloudflare for SaaS custom hostname and returns `{ domain }` (201). 400 bad hostname, 409 taken or second primary, 502 Cloudflare error, 503 not configured |
-| `POST /sites/:id/domains/:domainId/refresh` | owner or admin | Re-reads verification and certificate status from Cloudflare; returns `{ domain }` |
-| `DELETE /sites/:id/domains/:domainId` | owner or admin | Removes the custom hostname at Cloudflare, then the row |
+| `GET /sites/:id/domains` | owner or admin | `{ domains, cnameTarget, enabled }`; each domain has `hostname`, `kind`, `sslStatus`, `ownershipVerifiedAt`, `verifiedAt`, `active`, `expiresAt` and the `txt` and `dns` records to create. Also deletes unproved domains older than 7 days (any site) |
+| `POST /sites/:id/domains` | owner or admin | `{ hostname, kind?: "primary" \| "redirect" }`; records the domain with a fresh ownership token and returns `{ domain }` (201). Nothing is created at Cloudflare yet. 400 bad hostname, 409 taken or second primary, 429 over `MAX_DOMAINS_PER_SITE` or `MAX_DOMAINS_PER_USER` (admins exempt from the latter), 503 not configured |
+| `POST /sites/:id/domains/:domainId/refresh` | owner or admin | Looks up `_ministry-verify.<hostname>` TXT over DNS-over-HTTPS until it carries the token, then creates the Cloudflare custom hostname, then re-reads its verification and certificate status; returns `{ domain, txtFound }`. 502 resolver or Cloudflare error |
+| `DELETE /sites/:id/domains/:domainId` | owner or admin | Removes the custom hostname at Cloudflare (if one was created), then the row |
+| `GET /sites/:id/contact-email?email=` | owner or admin | `{ email, verified, verifiedAt, sentAt, enabled }`: whether the contact form may email this address; `enabled` is false in store-only mode |
+| `POST /sites/:id/contact-email/verify` | owner or admin | `{ email }`; emails a verification link through the configured sender and returns the same status. 429 past 5 sends per address per day, 502 send failed, 503 store-only mode |
+| `GET /verify-contact/:token` | no | The link in the verification email: marks the address verified for its site and answers a small HTML page (404 unknown, 410 expired after 7 days) |
 | `GET /sites/:id/messages?limit=50` | owner or admin | `{ messages: [{ id, name, email, message, language, createdAt, deliveredAt, deliveryError }] }`, newest first (limit 1-200) |
 | `DELETE /sites/:id/messages/:msgId` | owner or admin | Removes one stored message |
 | `GET /orgs/:id/integrations` | org owner or admin | `IntegrationsResponse`: `{ encryptionAvailable, activeSender: "organization" \| "platform" \| "none", resend: { keyHint, fromAddress, verifiedDomains, testedAt, lastError, updatedAt } \| null }`. Never contains the key or its ciphertext |
@@ -69,6 +72,12 @@ Set `vars.ALLOWED_ORIGIN` to `https://build.shofar.io` for production and uncomm
 
 AI routes answer 429 `{ error, used, limit, resetsAt }` over quota, 503 when no provider is configured, 502 on provider failure.
 
+#### AI quota
+
+Every AI call reserves its slot before the provider is called: a single `INSERT ... SELECT ... WHERE count < limit` writes a `pending` row into `ai_usage` only if both today's per-user count (`AI_DAILY_LIMIT`, default 30) and today's platform-wide count (`AI_GLOBAL_DAILY_LIMIT`, default 2000) are under their limits, so simultaneous requests cannot overshoot either one. The row becomes `done` with the real token counts once the provider answers, and is deleted again when the provider fails (nothing was spent). A `pending` row older than 10 minutes stops counting, so a Worker that died mid-call does not hold the slot until midnight. `GET /ai/usage` counts the same rows.
+
+The global cap is a backstop, not a budget: set a **hard spend limit on the provider project** as well (OpenAI: *Settings > Limits > Monthly budget* with a hard limit; Anthropic: *Console > Plans & billing > spend limits*), sized to the global cap times the dearest call, so a bug or a leaked key cannot run up a bill.
+
 Published sites are served by this Worker before CORS and auth run, from the `PUBLISHED` bucket only. A request host is resolved in this order: a customer domain from the `domains` table (a `primary` domain serves the site at `/`, its language pages at `/<lang>/`, the thank-you pages at `/thanks/` and `/<lang>/thanks/`, and takes contact-form posts at `/contact`; a `redirect` domain answers 301 to the primary), then `PUBLIC_SITES_HOST` (`sites.shofar.io/<slug>/`) and its subdomain form (`<slug>.sites.shofar.io/`). `PUBLIC_API_HOST` is never looked up as a customer domain. Published pages contain only document-relative links (`relativizeRootLinks` in `src/published.ts` enforces it), so the same `index.html` works at `/` and at `/<slug>/`.
 
 ### Contact form
@@ -79,6 +88,7 @@ Published sites post their contact form to this Worker: `POST /<slug>/contact` o
 - treats a filled honeypot field `website` as a bot: it redirects like a success and stores nothing;
 - allows 5 messages per visitor per 10 minutes and 30 per site per hour (`429`). The visitor is identified by a salted SHA-256 of `CF-Connecting-IP` (salt: the `FORM_SALT` var, default `ministry`); the raw address is never stored;
 - stores the message in `form_submissions` first, then emails it to the contact address with the visitor as `Reply-To`, subject `[<org>] New message from <name>`. A delivery failure is logged and kept in `delivery_error`; the visitor still gets the redirect. `delivered_via` records which sender handled it (`organization` or `platform`; null in store-only mode), see "Organization email" below;
+- from the platform sender, only emails an address that has confirmed it wants the messages (`contact_email_verifications`, see "Verifying the contact address"). Until then the message is stored with `delivery_error` = `address not verified`. An organization sending through its own Resend account is responsible for its own recipients, so that path is not gated; in store-only mode nothing is emailed anyway;
 - answers `303` to the thank-you page that publishing writes next to each language page: `/<slug>/thanks/` or `/<slug>/<lang>/thanks/` (subdomain form: `/thanks/`, `/<lang>/thanks/`). All of these responses are `Cache-Control: no-store`.
 
 Messages are personal data; deleting one is `DELETE /sites/:id/messages/:msgId`. They are kept until the owner deletes them (unpublishing does not remove them).
@@ -115,6 +125,10 @@ Setup flow: `PUT .../resend/key` with the API key, then `PUT .../resend/from` wi
 - **Cleanup.** The integration row and its counters are deleted with the organization (when its last site is deleted).
 - **Display names.** `fromName` may not contain quotes, angle brackets, backslashes or control characters; the From header is `"Name" <address>`.
 
+#### Verifying the contact address
+
+The address in a site's contact section is typed by the site owner, so with the platform sender enabled it would otherwise mail form content from `forms@shofar.io` to anyone the owner named. Delivery through the platform sender therefore needs a double opt-in per site and address: the owner clicks *Send verification email* next to the Email field (`POST /sites/:id/contact-email/verify`), the recipient opens the link (`GET /verify-contact/<token>`, public, token valid 7 days, replaced on every resend), and from then on messages for that address are emailed. At most 5 verification emails a day go to one address from one site. Verifications are deleted with the site. Changing the contact address starts over for the new one. An organization that sends through its own Resend account (above) is not gated: its sender, its recipients.
+
 Errors are `{ "error": string }`. A site you may not access answers 404, same as a missing one.
 
 ## Limits and safety
@@ -129,8 +143,12 @@ Values are strings. A missing, zero, negative or non-numeric value falls back to
 | `MAX_SITE_STORAGE_BYTES` | `104857600` (100 MB) | `POST /sites/:id/assets` | 413. Sum of `assets.bytes` for the site plus the new file; the file is not stored |
 | `MAX_VERSIONS_PER_SITE` | `500` | `PUT /sites/:id/document` | No error: after the save, the oldest versions are deleted until the site is back at the limit. The current version and the newest 50 are never deleted, so a site can sit above the limit if everything older is protected |
 | `MAX_PUBLISHES_PER_HOUR` | `20` | `POST /sites/:id/publish` | 429 with `Retry-After` (seconds until a slot frees) per site per rolling hour |
+| `MAX_DOMAINS_PER_SITE` | `3` | `POST /sites/:id/domains` | 429. Every domain of the site, primary and redirects, proved or not |
+| `MAX_DOMAINS_PER_USER` | `10` | `POST /sites/:id/domains` | 429. Domains across every site in organizations the user owns; admins are exempt |
+| `AI_DAILY_LIMIT` | `30` | every `POST .../ai/*` | 429 `{ used, limit, resetsAt }` per user per UTC day (see *AI quota*) |
+| `AI_GLOBAL_DAILY_LIMIT` | `2000` | every `POST .../ai/*` | 429 for every user for the rest of the UTC day; logged as `ai_global_limit_reached` |
 
-The per-file upload limit stays a constant of 5 MB (`src/routes/assets.ts`). The publish count lives in the `publish_events` table (one row per attempt that passed validation; rows older than a day are deleted on the next publish of that site), because publishing does not create a `site_versions` row. Apply the new migration (`wrangler d1 migrations apply ministry-sites --remote`) before deploying. Counts are read before the write, so two simultaneous requests can overshoot a limit by one; that is accepted.
+The per-file upload limit stays a constant of 5 MB (`src/routes/assets.ts`). The publish count lives in the `publish_events` table (one row per attempt that passed validation; rows older than a day are deleted on the next publish of that site), because publishing does not create a `site_versions` row. Apply the new migration (`wrangler d1 migrations apply ministry-sites --remote`) before deploying. For the site, storage, version, publish and domain limits the count is read before the write, so two simultaneous requests can overshoot by one; that is accepted. The AI limits are reserved atomically (see *AI quota*).
 
 ### Response headers
 
@@ -182,7 +200,12 @@ A customer's domain (for example `bridgeworldfoundation.org`) becomes a **custom
 5. **API token**: My Profile > API Tokens > Create Token > Custom token with permission **Zone > SSL and Certificates > Edit**, zone resource *Include > Specific zone > shofar.io*. Store it as the `CLOUDFLARE_API_TOKEN` secret (`npx wrangler secret put CLOUDFLARE_API_TOKEN`). Wrangler's OAuth login does not cover DNS or SSL, so this token is needed even when deploys work.
 6. **Zone id**: zone Overview page, right column, *Zone ID*. Paste it into `vars.CLOUDFLARE_ZONE_ID` in `wrangler.jsonc`.
 
-What the customer does: create `CNAME <their hostname> -> sites.shofar.io` at their DNS provider (the editor shows this). For a root domain (`example.org` rather than `www.example.org`) the provider must support CNAME at the apex (Cloudflare DNS does; otherwise ALIAS/ANAME), because an A record to our IPs is not a supported setup without apex proxying. Once the CNAME resolves, Cloudflare verifies the hostname and issues the certificate over HTTP validation with no further action; *Check status* in the editor (`POST .../refresh`) pulls the result. A domain is live when both the hostname status and `ssl.status` are `active`.
+What the customer does, at their DNS provider (the editor shows both records):
+
+1. **Prove ownership**: `TXT _ministry-verify.<their hostname>` with the value `ministry-verify=<token>` the editor shows (a random token per domain, stored in `domains.verification_token`). *Check status* (`POST .../refresh`) looks the record up over DNS-over-HTTPS (`https://cloudflare-dns.com/dns-query`); the bare token is accepted too. Nothing is created at Cloudflare before this record is found, so a hostname cannot be squatted, a dangling CNAME cannot be taken over, and the custom-hostname quota is not spent on unproved names. A domain whose record never appears is deleted after 7 days (on the next list or add, for any site), which frees the hostname for its real owner.
+2. **Route traffic**: `CNAME <their hostname> -> sites.shofar.io`. For a root domain (`example.org` rather than `www.example.org`) the provider must support CNAME at the apex (Cloudflare DNS does; otherwise ALIAS/ANAME), because an A record to our IPs is not a supported setup without apex proxying.
+
+The refresh that finds the TXT record creates the custom hostname; once the CNAME resolves, Cloudflare verifies the hostname and issues the certificate over HTTP validation with no further action, and later refreshes pull the result. A domain is live (`active`) when ownership is proved, the hostname status is `active` and `ssl.status` is `active`; the hosting handler serves a customer domain only in that state and answers 404 otherwise, redirect domains included.
 
 Bridge World Foundation: add `bridgeworldfoundation.org` as the main domain and `bridgeworld.foundation` (and `www.` forms) as redirects; redirects answer 301 to the main domain with the path preserved.
 

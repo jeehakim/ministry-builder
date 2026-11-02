@@ -30,7 +30,7 @@ import { isSiteAssetKey, loadAuthorizedSite } from "../access";
 import { AiProviderError, createProvider, type AiCallUsage, type AiProvider } from "../ai";
 import { conformNewSection, conformOption, editTarget, pageSummary } from "../ai/edit";
 import type { TemplateChoice } from "../ai/provider";
-import { dailyLimit, usedToday, utcDayWindow } from "../ai/usage";
+import { completedUsage, dailyLimit, globalDailyLimit, releaseUsage, reserveUsage, usedToday, utcDayWindow } from "../ai/usage";
 import { aiUsage, organizations, siteVersions, sites, type Site } from "../db/schema";
 import { newId } from "../ids";
 import { errorFields, logError, requestIdOf, scrub } from "../log";
@@ -69,7 +69,8 @@ async function parseBody<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.o
 }
 
 /**
- * Everything that must hold before a model call: site access, a configured provider and quota.
+ * Everything that must hold before a model call: site access and a configured provider. The quota is
+ * taken later, by `callProvider`, once the body has been validated, so a rejected request spends nothing.
  * Returns the loaded pieces or the Response to send.
  */
 async function guard(c: Ctx): Promise<Guard | Response> {
@@ -85,19 +86,6 @@ async function guard(c: Ctx): Promise<Guard | Response> {
   const provider = createProvider(c.env);
   if (!provider) return c.json({ error: "AI is not configured on this server" }, 503);
 
-  const used = await usedToday(db, c.var.user.id);
-  const limit = dailyLimit(c.env);
-  if (used >= limit) {
-    return c.json(
-      {
-        error: "Daily AI limit reached. It resets at midnight UTC.",
-        used,
-        limit,
-        resetsAt: utcDayWindow().resetsAt.toISOString(),
-      },
-      429,
-    );
-  }
   return { site, provider, orgName: org?.name ?? "Your organization" };
 }
 
@@ -110,33 +98,55 @@ function audit(value: unknown): string | null {
   return json.length > AUDIT_MAX_CHARS ? `${json.slice(0, AUDIT_MAX_CHARS)}…` : json;
 }
 
-function usageRow(
-  userId: string,
-  siteId: string,
-  action: AiAction,
+/**
+ * The statement that turns the call's reservation into its finished `ai_usage` row. Tokens were spent
+ * whether or not the output turns out usable, so callers run it on every path after the provider answered.
+ */
+function finishUsage(
+  db: ReturnType<typeof drizzle>,
+  usageId: string,
   usage: AiCallUsage,
   trail: { request?: unknown; result?: unknown } = {},
 ) {
-  return {
-    id: newId("aiu"),
-    userId,
-    siteId,
-    action,
-    provider: usage.provider,
-    model: usage.model,
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    requestJson: audit(trail.request),
-    resultJson: audit(trail.result),
-  };
+  return db
+    .update(aiUsage)
+    .set(completedUsage(usage, { requestJson: audit(trail.request), resultJson: audit(trail.result) }))
+    .where(eq(aiUsage.id, usageId));
 }
 
-/** Runs a provider call, logging tokens and latency; maps any failure to a 502 Response. */
+/**
+ * Reserves a quota slot, runs the provider call and logs tokens and latency. Over quota answers 429;
+ * a provider failure gives the slot back and answers 502. On success the caller finishes the usage row.
+ */
 async function callProvider<T extends { usage: AiCallUsage }>(
   c: Ctx,
+  siteId: string,
   action: AiAction,
   call: () => Promise<T>,
-): Promise<T | Response> {
+): Promise<{ result: T; usageId: string } | Response> {
+  const db = drizzle(c.env.DB);
+  const reservation = await reserveUsage(db, {
+    userId: c.var.user.id,
+    siteId,
+    action,
+    userLimit: dailyLimit(c.env),
+    globalLimit: globalDailyLimit(c.env),
+  });
+  if (!reservation.ok) {
+    const resetsAt = utcDayWindow().resetsAt.toISOString();
+    if (reservation.reason === "global") {
+      logError("ai_global_limit_reached", requestIdOf(c), { used: reservation.used, limit: reservation.limit });
+      return c.json(
+        { error: "The AI assistant has reached its daily capacity for everyone. It resets at midnight UTC.", used: reservation.used, limit: reservation.limit, resetsAt },
+        429,
+      );
+    }
+    return c.json(
+      { error: "Daily AI limit reached. It resets at midnight UTC.", used: reservation.used, limit: reservation.limit, resetsAt },
+      429,
+    );
+  }
+
   const startedAt = Date.now();
   try {
     const result = await call();
@@ -151,7 +161,7 @@ async function callProvider<T extends { usage: AiCallUsage }>(
         ms: Date.now() - startedAt,
       }),
     );
-    return result;
+    return { result, usageId: reservation.id };
   } catch (err) {
     // SDK errors can echo the prompt in their message, so only our own AiProviderError text is logged.
     logError("ai_call_failed", requestIdOf(c), {
@@ -159,6 +169,7 @@ async function callProvider<T extends { usage: AiCallUsage }>(
       ms: Date.now() - startedAt,
       ...errorFields(err, err instanceof AiProviderError),
     });
+    await releaseUsage(db, reservation.id);
     const message = err instanceof AiProviderError ? err.message : "The AI service is unavailable right now. Please try again in a moment.";
     return c.json({ error: message }, 502);
   }
@@ -193,7 +204,7 @@ aiRoutes.post("/sites/:id/ai/draft", tooLarge, async (c) => {
   const referenceAssetKey = await checkImageKey(c, g.site.id, body.referenceAssetKey);
   if (referenceAssetKey instanceof Response) return referenceAssetKey;
 
-  const result = await callProvider(c, "draft", () =>
+  const called = await callProvider(c, g.site.id, "draft", () =>
     g.provider.draft({
       notes: body.notes,
       language: body.language,
@@ -204,7 +215,8 @@ aiRoutes.post("/sites/:id/ai/draft", tooLarge, async (c) => {
       referenceAssetKey,
     }),
   );
-  if (result instanceof Response) return result;
+  if (called instanceof Response) return called;
+  const { result, usageId } = called;
 
   const db = drizzle(c.env.DB);
   const variationGroupId = newId("vgrp");
@@ -222,13 +234,10 @@ aiRoutes.post("/sites/:id/ai/draft", tooLarge, async (c) => {
     variations.push({ versionId: newId("ver"), label: candidate.label, document });
   }
 
-  // Tokens were spent whether or not the output was usable, so the call counts against the quota.
-  const usage = db.insert(aiUsage).values(
-    usageRow(c.var.user.id, g.site.id, "draft", result.usage, {
-      request: { notes: body.notes, language: body.language, variations: body.variations, styleNotes: body.styleNotes, referenceAssetKey: body.referenceAssetKey },
-      result: { variationGroupId, versionIds: variations.map((v) => v.versionId), labels: variations.map((v) => v.label) },
-    }),
-  );
+  const usage = finishUsage(db, usageId, result.usage, {
+    request: { notes: body.notes, language: body.language, variations: body.variations, styleNotes: body.styleNotes, referenceAssetKey: body.referenceAssetKey },
+    result: { variationGroupId, versionIds: variations.map((v) => v.versionId), labels: variations.map((v) => v.label) },
+  });
   if (variations.length === 0) {
     await usage;
     return c.json({ error: "The AI returned drafts we could not use. Please try again." }, 502);
@@ -256,12 +265,11 @@ aiRoutes.post("/sites/:id/ai/rewrite", tooLarge, async (c) => {
   const body = await parseBody(c, AiRewriteRequest);
   if (body instanceof Response) return body;
 
-  const result = await callProvider(c, "rewrite", () => g.provider.rewrite(body));
-  if (result instanceof Response) return result;
+  const called = await callProvider(c, g.site.id, "rewrite", () => g.provider.rewrite(body));
+  if (called instanceof Response) return called;
+  const { result, usageId } = called;
 
-  await drizzle(c.env.DB).insert(aiUsage).values(
-    usageRow(c.var.user.id, g.site.id, "rewrite", result.usage, { request: { instruction: body.instruction, context: body.context, text: body.text }, result: { text: result.text } }),
-  );
+  await finishUsage(drizzle(c.env.DB), usageId, result.usage, { request: { instruction: body.instruction, context: body.context, text: body.text }, result: { text: result.text } });
   const response: AiRewriteResponse = { text: result.text };
   return c.json(response);
 });
@@ -274,14 +282,13 @@ aiRoutes.post("/sites/:id/ai/theme", tooLarge, async (c) => {
   const referenceAssetKey = await checkImageKey(c, g.site.id, body.referenceAssetKey);
   if (referenceAssetKey instanceof Response) return referenceAssetKey;
 
-  const result = await callProvider(c, "theme", () =>
+  const called = await callProvider(c, g.site.id, "theme", () =>
     g.provider.theme({ templates: templateChoices(), description: body.description, referenceAssetKey }),
   );
-  if (result instanceof Response) return result;
+  if (called instanceof Response) return called;
+  const { result, usageId } = called;
 
-  await drizzle(c.env.DB).insert(aiUsage).values(
-    usageRow(c.var.user.id, g.site.id, "theme", result.usage, { request: { description: body.description, referenceAssetKey: body.referenceAssetKey }, result: result }),
-  );
+  await finishUsage(drizzle(c.env.DB), usageId, result.usage, { request: { description: body.description, referenceAssetKey: body.referenceAssetKey }, result: result });
   const parsed = Theme.safeParse(result.theme);
   if (!parsed.success) {
     logError("ai_theme_invalid", requestIdOf(c), { issues: scrub(describeIssues(parsed.error)) });
@@ -303,12 +310,11 @@ aiRoutes.post("/sites/:id/ai/alt-text", tooLarge, async (c) => {
   if (assetKey instanceof Response) return assetKey;
   if (assetKey === undefined) return c.json({ error: "assetKey is required" }, 400);
 
-  const result = await callProvider(c, "alt_text", () => g.provider.altText({ assetKey, orgName: g.orgName }));
-  if (result instanceof Response) return result;
+  const called = await callProvider(c, g.site.id, "alt_text", () => g.provider.altText({ assetKey, orgName: g.orgName }));
+  if (called instanceof Response) return called;
+  const { result, usageId } = called;
 
-  await drizzle(c.env.DB).insert(aiUsage).values(
-    usageRow(c.var.user.id, g.site.id, "alt_text", result.usage, { request: { assetKey: body.assetKey }, result: { alt: result.alt } }),
-  );
+  await finishUsage(drizzle(c.env.DB), usageId, result.usage, { request: { assetKey: body.assetKey }, result: { alt: result.alt } });
   const response: AiAltTextResponse = { alt: result.alt };
   return c.json(response);
 });
@@ -340,16 +346,14 @@ aiRoutes.post("/sites/:id/ai/translate", tooLarge, async (c) => {
     return c.json({ error: "That is already the site's main language" }, 400);
   }
 
-  const result = await callProvider(c, "translate", () =>
+  const called = await callProvider(c, g.site.id, "translate", () =>
     g.provider.translate({ document, targetLanguage: language, sourceLanguage: document.meta.language }),
   );
-  if (result instanceof Response) return result;
+  if (called instanceof Response) return called;
+  const { result, usageId } = called;
 
-  // Tokens were spent whether or not the output was usable, so the call counts against the quota.
   const versionId = newId("ver");
-  const usage = db.insert(aiUsage).values(
-    usageRow(c.var.user.id, g.site.id, "translate", result.usage, { request: { language: body.language }, result: { versionId } }),
-  );
+  const usage = finishUsage(db, usageId, result.usage, { request: { language: body.language }, result: { versionId } });
   const overlay = TranslationOverlay.safeParse(result.overlay);
   if (!overlay.success) {
     logError("ai_translation_invalid", requestIdOf(c), { issues: scrub(describeIssues(overlay.error)) });
@@ -416,7 +420,7 @@ aiRoutes.post("/sites/:id/ai/edit", tooLarge, async (c) => {
   if (!target) return c.json({ error: "That section is not on the saved page. Save and try again." }, 400);
   const options = body.scope.kind === "page" ? 1 : body.options;
 
-  const result = await callProvider(c, "edit", () =>
+  const called = await callProvider(c, g.site.id, "edit", () =>
     g.provider.edit({
       instruction: body.instruction,
       scope: body.scope,
@@ -429,16 +433,14 @@ aiRoutes.post("/sites/:id/ai/edit", tooLarge, async (c) => {
       options,
     }),
   );
-  if (result instanceof Response) return result;
+  if (called instanceof Response) return called;
+  const { result, usageId } = called;
 
   const changes = result.options.flatMap((option) => conformOption(document, body.scope, option, Object.keys(templates)));
-  // Tokens were spent whether or not the output was usable, so the call counts against the quota.
-  await db.insert(aiUsage).values(
-    usageRow(c.var.user.id, g.site.id, "edit", result.usage, {
-      request: { instruction: body.instruction, scope: body.scope, options },
-      result: { changes: changes.map((ch) => ({ target: ch.target, label: ch.label, after: ch.after })) },
-    }),
-  );
+  await finishUsage(db, usageId, result.usage, {
+    request: { instruction: body.instruction, scope: body.scope, options },
+    result: { changes: changes.map((ch) => ({ target: ch.target, label: ch.label, after: ch.after })) },
+  });
   if (changes.length === 0) {
     logError("ai_edit_invalid", requestIdOf(c), { scope: body.scope.kind, options: result.options.length });
     return c.json({ error: "The AI returned changes we could not use. Please try again." }, 502);
@@ -460,7 +462,7 @@ aiRoutes.post("/sites/:id/ai/add-section", tooLarge, async (c) => {
   const afterSection = body.afterSectionId ? document.sections.find((s) => s.id === body.afterSectionId) : undefined;
   if (body.afterSectionId && !afterSection) return c.json({ error: "That section is not on the saved page. Save and try again." }, 400);
 
-  const result = await callProvider(c, "add_section", () =>
+  const called = await callProvider(c, g.site.id, "add_section", () =>
     g.provider.addSection({
       instruction: body.instruction,
       pageSummary: pageSummary(document),
@@ -470,15 +472,14 @@ aiRoutes.post("/sites/:id/ai/add-section", tooLarge, async (c) => {
       language: document.meta.language,
     }),
   );
-  if (result instanceof Response) return result;
+  if (called instanceof Response) return called;
+  const { result, usageId } = called;
 
   const section = conformNewSection(document, result.section);
-  await db.insert(aiUsage).values(
-    usageRow(c.var.user.id, g.site.id, "add_section", result.usage, {
-      request: { instruction: body.instruction, afterSectionId: body.afterSectionId },
-      result: section ? { section } : null,
-    }),
-  );
+  await finishUsage(db, usageId, result.usage, {
+    request: { instruction: body.instruction, afterSectionId: body.afterSectionId },
+    result: section ? { section } : null,
+  });
   if (!section) {
     logError("ai_add_section_invalid", requestIdOf(c), {});
     return c.json({ error: "The AI returned a section we could not use. Please try again." }, 502);
