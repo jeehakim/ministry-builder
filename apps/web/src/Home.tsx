@@ -12,6 +12,7 @@ import type { SiteSummary } from "./api";
 import { LOCAL_SITE_ID } from "./backend";
 import { useBackend } from "./backend-context";
 import { Brand } from "./components/Brand";
+import { HelpMenu } from "./components/HelpMenu";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { PublishedBadge } from "./components/PublishedBadge";
 import { UserMenu } from "./components/UserMenu";
@@ -103,6 +104,7 @@ export function Home() {
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
           <Brand />
           <div className="flex items-center gap-1">
+            <HelpMenu />
             <ThemeToggle />
             <UserMenu />
           </div>

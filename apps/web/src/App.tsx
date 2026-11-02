@@ -2,6 +2,9 @@ import { Link, Route, Routes } from "react-router";
 import { Compass } from "lucide-react";
 import { Home } from "./Home";
 import { EditorPage } from "./editor/EditorPage";
+import { AiGuide } from "./guides/AiGuide";
+import { DomainsGuide } from "./guides/DomainsGuide";
+import { PublishGuide } from "./guides/PublishGuide";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 
@@ -10,6 +13,9 @@ export function App() {
     <Routes>
       <Route path="/" element={<Home />} />
       <Route path="/sites/:id" element={<EditorPage />} />
+      <Route path="/guide/ai" element={<AiGuide />} />
+      <Route path="/guide/publish" element={<PublishGuide />} />
+      <Route path="/guide/domains" element={<DomainsGuide />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

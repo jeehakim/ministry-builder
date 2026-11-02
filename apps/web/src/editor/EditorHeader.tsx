@@ -6,6 +6,7 @@ import { AiUsagePill } from "../components/AiUsagePill";
 import { Brand } from "../components/Brand";
 import { PublishedBadge } from "../components/PublishedBadge";
 import { SaveIndicator } from "../components/SaveIndicator";
+import { HelpMenu } from "../components/HelpMenu";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { UserMenu } from "../components/UserMenu";
 import { cn } from "@/lib/utils";
@@ -101,6 +102,7 @@ export function EditorHeader(props: {
         <Rocket />
         Publish
       </Button>
+      <HelpMenu />
       <ThemeToggle />
       <UserMenu />
     </header>

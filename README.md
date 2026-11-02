@@ -47,7 +47,7 @@ Ministry Sites is a project of [Shofar Ministry](https://shofar.io) to change th
 You need Node 22 and pnpm.
 
 ```bash
-git clone https://github.com/jeehakim/ministry-sites.git && cd ministry-sites && pnpm install
+git clone https://github.com/jeehakim/ministry-builder.git && cd ministry-builder && pnpm install
 ```
 
 ```bash
