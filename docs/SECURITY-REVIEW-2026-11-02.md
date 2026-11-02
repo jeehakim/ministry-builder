@@ -5,6 +5,28 @@ limits.ts, apps/web/public/_headers, hosting.ts) partly addresses findings 2, 4 
 and none of it is committed. For the abuse and denial-of-service items I describe the weakness and the fix
 but leave out step-by-step exploitation.
 
+## Status (checked against `main` on 2026-11-02, after PR 7)
+
+Line numbers below are those of HEAD ca60359 and no longer match the code. This table is the current state; the findings themselves are kept as written.
+
+| # | Severity | Status | Where it stands |
+|---|---|---|---|
+| 1 | HIGH | Fixed | Theme colors and fonts are regex-constrained in `packages/schema/src/site.ts`, and `themeVars` escapes the characters that could close a style block (`packages/templates/src/util.ts`) |
+| 2 | HIGH | Fixed in code | Sites per user, versions per site with pruning, storage per site and publishes per hour are enforced (`apps/api/src/limits.ts`, vars in `wrangler.jsonc`). A Cloudflare WAF rate-limit rule is still an owner-side dashboard step |
+| 3 | MEDIUM | Fixed | Quota is reserved atomically before the provider call, with a global daily cap (`apps/api/src/ai/usage.ts`, PR 3) |
+| 4 | MEDIUM | Mitigated | Hosted pages send `frame-ancestors 'none'`. The builder and its API moved to `build.shofar.ai` / `api.build.shofar.ai` (PR 7), a different registrable domain from `sites.shofar.io`. Tenants still share the one `sites.shofar.io` origin; per-tenant origins or a Public Suffix List entry were not pursued |
+| 5 | MEDIUM | Fixed | The platform sender only emails a double-opted-in address (`contact_email_verifications`, PR 3) |
+| 6 | MEDIUM | Fixed | TXT ownership proof before any Cloudflare call, per-site and per-user caps, unproved rows expire, only active rows are served (PR 3) |
+| 7 | MEDIUM | Fixed | `apps/web/public/_headers` (CSP checked by `csp.test.ts`), `apps/api/src/security.ts` on API and hosted responses |
+| 8 | LOW | Open | Count-then-insert, IPv6 keyed by full address, per-site cap fixed at 30 per hour (`apps/api/src/contact.ts`) |
+| 9 | LOW | Open | SHA-256 with the `FORM_SALT` var (default `ministry`), no retention period, user agent kept. Set `FORM_SALT` in production until this is reworked |
+| 10 | LOW | Partly fixed | Site deletion now clears `ai_usage` request and result text. The Clerk `user.deleted` webhook arrives with the organizations work (PR 4). No retention TTL |
+| 11 | LOW | Fixed | Custom hostnames and domain rows are removed before the site rows (`apps/api/src/routes/sites.ts`) |
+| 12 | LOW | Open | Draft `language` still has no length bound (`packages/schema/src/ai.ts`); `orgName` is fenced only in the alt-text prompt. Model output is validated against the strict schema, which closes the path into finding 1 |
+| 13 | INFO | Open | One static staff token, no minimum length check, no audit trail of staff actions |
+| 14 | INFO | Fixed | `workers_dev` and `preview_urls` are off in both `wrangler.jsonc` files |
+| 15 | INFO | Fixed | `minimumReleaseAge` in `pnpm-workspace.yaml`; `shadcn` is a devDependency |
+
 ## Findings
 
 [HIGH] 1. Stored XSS: theme values break out of `<style>` on the shared sites.shofar.io origin

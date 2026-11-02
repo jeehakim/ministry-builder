@@ -8,5 +8,7 @@ Hosted tenant pages are served by the API Worker at sites.shofar.io/<slug>/ (pat
 
 At the 2026-11-02 audit (HEAD ca60359), these features existed in code but were off in wrangler.jsonc: contact email (EMAIL_PROVIDER="none") and custom domains (CLOUDFLARE_ZONE_ID=""). Their abuse findings (arbitrary unverified recipient email relay, unlimited custom hostnames / domain squatting) were rated latent Medium and become High when switched on.
 
+Status of the 2026-11-02 findings as of PR 7: 1, 2, 3, 5, 6, 7, 11, 14, 15 fixed; 4 mitigated (frame-ancestors 'none', builder off the shared registrable domain); 10 partly (webhook in PR 4); 8, 9, 12, 13 open (contact-form rate-limit gaps, reversible IP hash with default FORM_SALT, unbounded draft `language`, single staff token). The table at the top of docs/SECURITY-REVIEW-2026-11-02.md is the record; update it when one of these changes.
+
 **Why:** severity of tenant-content bugs depends on origin sharing; latent findings must be re-rated when config flips.
 **How to apply:** re-check wrangler.jsonc vars before rating email/domain findings; treat any tenant-controlled HTML/CSS as hostile to every other tenant. See [[pattern-raw-strings-into-templates]].
