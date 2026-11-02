@@ -6,6 +6,7 @@ import { LOCAL_SITE_ID } from "./backend";
 import { useBackend } from "./backend-context";
 import { Brand } from "./components/Brand";
 import { ThemeToggle } from "./components/ThemeToggle";
+import { PublishedBadge } from "./components/PublishedBadge";
 import { UserMenu } from "./components/UserMenu";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -136,6 +137,11 @@ export function Home() {
                       <div className="min-w-0">
                         <p className="truncate font-medium">{s.orgName}</p>
                         <p className="truncate text-xs text-muted-foreground">{s.slug}.sites.shofar.io</p>
+                        {s.publishedUrl ? (
+                          <div className="mt-2">
+                            <PublishedBadge url={s.publishedUrl} />
+                          </div>
+                        ) : null}
                       </div>
                       <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand">
                         <Globe className="size-4" aria-hidden="true" />

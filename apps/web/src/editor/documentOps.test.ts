@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { emptySiteDocument, SiteDocument, SECTION_TYPES } from "@ministry/schema";
-import { addSection, formatIssue, moveSection, removeSection, replaceSection, toggleHidden } from "./documentOps.ts";
+import { addSection, formatIssue, mergeTheme, moveSection, removeSection, replaceSection, toggleHidden } from "./documentOps.ts";
 
 const ids = (doc: SiteDocument) => doc.sections.map((s) => s.id);
 
@@ -67,4 +67,19 @@ test("reorderSection moves a section to the target position and ignores unknown 
   assert.deepEqual(ids(moved).slice(0, 3), [second, third, first]);
   assert.equal(reorderSection(doc, first!, "nope"), doc);
   assert.equal(reorderSection(doc, first!, first!), doc);
+});
+
+test("mergeTheme applies the incoming theme but keeps the template when the id is unknown", () => {
+  const current = emptySiteDocument().theme;
+  const incoming = { ...current, templateId: "ghost", primary: "#112233", heroStyle: "solid" as const };
+  const merged = mergeTheme(current, incoming, ["classic", "modern"]);
+  assert.equal(merged.primary, "#112233");
+  assert.equal(merged.heroStyle, "solid");
+  assert.equal(merged.templateId, current.templateId);
+});
+
+test("mergeTheme adopts a known template id", () => {
+  const current = emptySiteDocument().theme;
+  const merged = mergeTheme(current, { ...current, templateId: "modern" }, ["classic", "modern"]);
+  assert.equal(merged.templateId, "modern");
 });

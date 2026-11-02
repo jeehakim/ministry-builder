@@ -3,6 +3,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useAi } from "../editor/AiContext";
+import { AiAssist } from "./AiAssist";
 
 export function TextField(props: {
   label: string;
@@ -11,14 +13,27 @@ export function TextField(props: {
   multiline?: boolean;
   placeholder?: string;
   hint?: ReactNode;
+  /** Adds an AI rewrite button. `context` tells the model where the text lives, e.g. "hero Heading". */
+  assist?: { context: string };
 }) {
-  const { label, value, onChange, multiline, placeholder, hint } = props;
+  const { label, value, onChange, multiline, placeholder, hint, assist } = props;
   const id = useId();
+  const { ai } = useAi();
+  const labelEl = (
+    <Label htmlFor={id} className="text-xs text-muted-foreground">
+      {label}
+    </Label>
+  );
   return (
     <div className="space-y-1.5">
-      <Label htmlFor={id} className="text-xs text-muted-foreground">
-        {label}
-      </Label>
+      {assist && ai ? (
+        <div className="flex min-h-6 items-center justify-between gap-2">
+          {labelEl}
+          <AiAssist label={label} value={value} context={assist.context} onApply={onChange} />
+        </div>
+      ) : (
+        labelEl
+      )}
       {multiline ? (
         <Textarea
           id={id}

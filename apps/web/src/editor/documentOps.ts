@@ -1,4 +1,4 @@
-import { newSectionId, Section, type SectionType, type SiteDocument } from "@ministry/schema";
+import { newSectionId, Section, type SectionType, type SiteDocument, type Theme } from "@ministry/schema";
 
 /** Minimal valid content per type; the schema fills in the other defaults. */
 const STARTERS: Record<SectionType, Record<string, unknown>> = {
@@ -56,6 +56,15 @@ export function removeSection(doc: SiteDocument, id: string): SiteDocument {
 
 export function replaceSection(doc: SiteDocument, next: Section): SiteDocument {
   return { ...doc, sections: doc.sections.map((s) => (s.id === next.id ? next : s)) };
+}
+
+/**
+ * Merges a theme suggested by the AI into the current one. A template id the
+ * registry does not know is ignored so the page never switches to a missing template.
+ */
+export function mergeTheme(current: Theme, incoming: Theme, knownTemplateIds: readonly string[]): Theme {
+  const templateId = knownTemplateIds.includes(incoming.templateId) ? incoming.templateId : current.templateId;
+  return { ...current, ...incoming, templateId };
 }
 
 /** "path.to.field: message" for the first issue of a Zod error. */

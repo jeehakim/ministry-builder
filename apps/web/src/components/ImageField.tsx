@@ -1,9 +1,11 @@
 import { useId, useState, type DragEvent } from "react";
 import type { ImageRef } from "@ministry/schema";
-import { ImagePlus, Loader2, Trash2, Upload } from "lucide-react";
+import { ImagePlus, Loader2, Sparkles, Trash2, Upload } from "lucide-react";
 import { useBackend } from "../backend-context";
-import { useSiteId } from "../editor/EditorContext";
-import { resizeToWebp } from "../lib/image";
+import { useAi } from "../editor/AiContext";
+import { assetKeyFromSrc } from "../lib/urls";
+import { useImageUpload } from "../lib/useImageUpload";
+import { useLatest } from "../lib/useLatest";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,28 +18,32 @@ export function ImageField(props: {
 }) {
   const { label, value, onChange } = props;
   const backend = useBackend();
-  const siteId = useSiteId();
+  const { ai, enabled, disabledReason, busy: aiBusy, runAltText } = useAi();
   const inputId = useId();
-  const [busy, setBusy] = useState(false);
+  const altKey = `alt:${inputId}`;
+  const { upload, busy, error } = useImageUpload();
   const [dragging, setDragging] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const valueRef = useLatest(value);
+  const onChangeRef = useLatest(onChange);
 
   async function handleFile(file: File) {
-    if (!file.type.startsWith("image/")) {
-      setError("Please choose an image file.");
-      return;
+    const uploaded = await upload(file);
+    if (uploaded) {
+      onChangeRef.current({
+        src: uploaded.src,
+        alt: valueRef.current?.alt ?? "",
+        width: uploaded.width,
+        height: uploaded.height,
+      });
     }
-    setBusy(true);
-    setError(null);
-    try {
-      const processed = await resizeToWebp(file);
-      const src = await backend.uploadImage(siteId, processed.blob, processed.fileName);
-      onChange({ src, alt: value?.alt ?? "", width: processed.width, height: processed.height });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed.");
-    } finally {
-      setBusy(false);
-    }
+  }
+
+  async function writeAltText() {
+    if (!value) return;
+    const alt = await runAltText(altKey, value.src);
+    // Read the latest value: the user may have edited other fields while the AI was thinking.
+    const current = valueRef.current;
+    if (alt !== null && current && current.src === value.src) onChangeRef.current({ ...current, alt });
   }
 
   function onDrop(e: DragEvent) {
@@ -79,6 +85,19 @@ export function ImageField(props: {
                   <Trash2 />
                   Remove
                 </Button>
+                {ai && assetKeyFromSrc(value.src) ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={!enabled || aiBusy[altKey] === true}
+                    title={enabled ? "Describe this image for screen readers" : (disabledReason ?? undefined)}
+                    onClick={() => void writeAltText()}
+                  >
+                    {aiBusy[altKey] === true ? <Loader2 className="animate-spin" /> : <Sparkles />}
+                    Write alt text
+                  </Button>
+                ) : null}
               </div>
               <Input
                 aria-label={`${label} alt text`}

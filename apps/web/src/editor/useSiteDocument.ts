@@ -32,6 +32,9 @@ export function useSiteDocument(siteId: string) {
   // Serialises saves so an older request can never finish after a newer one.
   const queue = useRef<Promise<void>>(Promise.resolve());
   const inFlight = useRef(0);
+  // The newest document handed to the save queue, so flush() never saves it twice.
+  const requested = useRef<SiteDocument | null>(null);
+  const latestDoc = useRef<SiteDocument | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,6 +44,7 @@ export function useSiteDocument(siteId: string) {
       .then(({ site, document }) => {
         if (cancelled) return;
         persisted.current = document;
+        requested.current = null;
         setSave({ kind: "saved" });
         setLoad({ kind: "ready", site, doc: document });
       })
@@ -53,6 +57,31 @@ export function useSiteDocument(siteId: string) {
   }, [backend, siteId]);
 
   const doc = load.kind === "ready" ? load.doc : null;
+  latestDoc.current = doc;
+
+  /** Queues a save of `target`. Never rejects: failures land in the save state and leave `persisted` behind. */
+  const persist = useCallback(
+    (target: SiteDocument, data: SiteDocument): Promise<void> => {
+      requested.current = target;
+      setSave({ kind: "saving" });
+      inFlight.current += 1;
+      const run = queue.current.then(async () => {
+        try {
+          await backend.saveDocument(siteId, data);
+          persisted.current = target;
+          inFlight.current -= 1;
+          if (inFlight.current === 0) setSave((current) => (current.kind === "saving" ? { kind: "saved" } : current));
+        } catch (err) {
+          inFlight.current -= 1;
+          if (requested.current === target) requested.current = null; // let flush() retry it
+          setSave({ kind: "error", message: errorText(err) });
+        }
+      });
+      queue.current = run;
+      return run;
+    },
+    [backend, siteId],
+  );
 
   useEffect(() => {
     if (!doc || doc === persisted.current) return;
@@ -65,22 +94,25 @@ export function useSiteDocument(siteId: string) {
     setSave({ kind: "unsaved" });
 
     const timer = setTimeout(() => {
-      setSave({ kind: "saving" });
-      inFlight.current += 1;
-      queue.current = queue.current.then(async () => {
-        try {
-          await backend.saveDocument(siteId, parsed.data);
-          persisted.current = doc;
-          inFlight.current -= 1;
-          if (inFlight.current === 0) setSave((current) => (current.kind === "saving" ? { kind: "saved" } : current));
-        } catch (err) {
-          inFlight.current -= 1;
-          setSave({ kind: "error", message: errorText(err) });
-        }
-      });
+      if (requested.current === doc) return; // flush() already saved this exact document
+      void persist(doc, parsed.data);
     }, AUTOSAVE_MS);
     return () => clearTimeout(timer);
-  }, [doc, backend, siteId]);
+  }, [doc, persist]);
+
+  /** Saves pending edits now and resolves once they are stored. Throws if the document is invalid or the save fails. */
+  const flush = useCallback(async (): Promise<void> => {
+    const current = latestDoc.current;
+    if (!current) return;
+    if (current !== persisted.current && requested.current !== current) {
+      const parsed = SiteDocument.safeParse(current);
+      if (!parsed.success) throw new Error(`Fix this first: ${formatIssue(parsed.error)}`);
+      await persist(current, parsed.data);
+    } else {
+      await queue.current;
+    }
+    if (persisted.current !== current) throw new Error("Your latest changes could not be saved. Try again in a moment.");
+  }, [persist]);
 
   const unsaved = save.kind === "unsaved" || save.kind === "saving";
   useEffect(() => {
@@ -94,10 +126,16 @@ export function useSiteDocument(siteId: string) {
     setLoad((current) => (current.kind === "ready" ? { ...current, doc: fn(current.doc) } : current));
   }, []);
 
+  const updateSite = useCallback((patch: Partial<SiteInfo>) => {
+    setLoad((current) => (current.kind === "ready" ? { ...current, site: { ...current.site, ...patch } } : current));
+  }, []);
+
   return {
     load,
     save,
     update,
+    updateSite,
+    flush,
     addSection: useCallback((type: SectionType) => update((d) => addSection(d, type)), [update]),
     moveSection: useCallback((id: string, dir: -1 | 1) => update((d) => moveSection(d, id, dir)), [update]),
     reorderSection: useCallback((id: string, overId: string) => update((d) => reorderSection(d, id, overId)), [update]),

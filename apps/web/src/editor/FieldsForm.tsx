@@ -29,18 +29,34 @@ function withKey(obj: Obj, key: string, value: unknown): Obj {
 }
 
 /** Renders the fields described by `fields` for the object `value`. Fully controlled and immutable. */
-export function FieldsForm(props: { value: Obj; fields: FieldSpec[]; onChange: (next: Obj) => void }) {
-  const { value, fields, onChange } = props;
+export function FieldsForm(props: {
+  value: Obj;
+  fields: FieldSpec[];
+  onChange: (next: Obj) => void;
+  /** Section type such as "hero"; when set, text fields get AI rewrite buttons that know where the text lives. */
+  sectionType?: string;
+}) {
+  const { value, fields, onChange, sectionType } = props;
   return (
     <div className="space-y-4">
       {fields.map((field) => (
-        <FieldView key={field.key} field={field} value={value} onChange={onChange} />
+        <FieldView key={field.key} field={field} value={value} onChange={onChange} sectionType={sectionType} />
       ))}
     </div>
   );
 }
 
-function FieldView({ field, value, onChange }: { field: FieldSpec; value: Obj; onChange: (next: Obj) => void }) {
+function FieldView({
+  field,
+  value,
+  onChange,
+  sectionType,
+}: {
+  field: FieldSpec;
+  value: Obj;
+  onChange: (next: Obj) => void;
+  sectionType?: string;
+}) {
   const current = value[field.key];
   const reduced = useReducedMotion();
 
@@ -52,6 +68,7 @@ function FieldView({ field, value, onChange }: { field: FieldSpec; value: Obj; o
           value={str(current)}
           multiline={field.multiline}
           placeholder={field.placeholder}
+          assist={sectionType ? { context: `${sectionType} ${field.label}` } : undefined}
           onChange={(text) => onChange(withKey(value, field.key, field.optional && text === "" ? undefined : text))}
         />
       );
@@ -189,7 +206,12 @@ function FieldView({ field, value, onChange }: { field: FieldSpec; value: Obj; o
                       </Button>
                     </span>
                   </div>
-                  <FieldsForm value={item} fields={field.fields} onChange={(next) => setItems(items.map((it, i) => (i === index ? next : it)))} />
+                  <FieldsForm
+                    value={item}
+                    fields={field.fields}
+                    sectionType={sectionType}
+                    onChange={(next) => setItems(items.map((it, i) => (i === index ? next : it)))}
+                  />
                 </motion.li>
               ))}
             </AnimatePresence>

@@ -5,7 +5,9 @@ import { ImageField } from "../components/ImageField";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { mergeTheme } from "./documentOps";
 import { FONT_PAIRS, findFontPair } from "./fontPairs";
+import { ThemeReference } from "./ThemeReference";
 
 const HERO_STYLES: { value: Theme["heroStyle"]; label: string }[] = [
   { value: "image", label: "Photo" },
@@ -45,12 +47,23 @@ export function SiteForm({ doc, update }: { doc: SiteDocument; update: (fn: (d: 
           </h2>
           <p className="text-xs text-muted-foreground">Shown in the header, page title, and search results.</p>
         </div>
-        <TextField label="Name" value={meta.orgName} onChange={(orgName) => setMeta({ orgName })} />
-        <TextField label="Tagline" value={meta.tagline} onChange={(tagline) => setMeta({ tagline })} />
+        <TextField
+          label="Name"
+          value={meta.orgName}
+          assist={{ context: "organization name" }}
+          onChange={(orgName) => setMeta({ orgName })}
+        />
+        <TextField
+          label="Tagline"
+          value={meta.tagline}
+          assist={{ context: "organization tagline" }}
+          onChange={(tagline) => setMeta({ tagline })}
+        />
         <TextField
           label="Description for search engines"
           multiline
           value={meta.description}
+          assist={{ context: "search engine description" }}
           onChange={(description) => setMeta({ description })}
         />
         <ImageField label="Logo" value={meta.logo} onChange={(logo) => setMeta({ logo })} />
@@ -74,7 +87,12 @@ export function SiteForm({ doc, update }: { doc: SiteDocument; update: (fn: (d: 
           </h2>
           <p className="text-xs text-muted-foreground">Changes show in the preview right away.</p>
         </div>
-        <SelectField label="Template" value={theme.templateId} options={templateOptions} onChange={(templateId) => setTheme({ templateId })} />
+        <ThemeReference
+          onApply={(incoming) =>
+            update((d) => ({ ...d, theme: mergeTheme(d.theme, incoming, Object.keys(templates)) }))
+          }
+        />
+        <SelectField label="Template" value={theme.templateId} options={templateOptions} onChange={(templateId) => setTheme({ templateId, ...(templates[templateId]?.themeDefaults ?? {}) })} />
         <div className="grid grid-cols-2 gap-3">
           <ColorField label="Primary" value={theme.primary} onChange={(primary) => setTheme({ primary })} />
           <ColorField label="Accent" value={theme.accent} onChange={(accent) => setTheme({ accent })} />

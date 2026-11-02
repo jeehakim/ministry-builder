@@ -1,7 +1,36 @@
-import { emptySiteDocument, SiteDocument, type ImageRef } from "@ministry/schema";
-import { createApiClient, ApiError, type GetToken, type LoadedSite, type SiteSummary } from "./api";
+import {
+  emptySiteDocument,
+  SiteDocument,
+  type AiAltTextResponse,
+  type AiDraftRequest,
+  type AiDraftResponse,
+  type AiRewriteRequest,
+  type AiRewriteResponse,
+  type AiThemeRequest,
+  type AiThemeResponse,
+  type AiUsageResponse,
+  type ImageRef,
+} from "@ministry/schema";
+import {
+  createApiClient,
+  ApiError,
+  type GetToken,
+  type LoadedSite,
+  type PublishResult,
+  type SiteSummary,
+} from "./api";
 import { API_URL } from "./env";
 import { slugify } from "./lib/files";
+
+/** AI copilot calls. Only the API backend has them. */
+export interface AiBackend {
+  usage(): Promise<AiUsageResponse>;
+  draft(siteId: string, request: AiDraftRequest): Promise<AiDraftResponse>;
+  rewrite(siteId: string, request: AiRewriteRequest): Promise<AiRewriteResponse>;
+  theme(siteId: string, request: AiThemeRequest): Promise<AiThemeResponse>;
+  /** `assetKey` is the R2 key: an `ImageRef.src` without its "/assets/" prefix. */
+  altText(siteId: string, assetKey: string): Promise<AiAltTextResponse>;
+}
 
 /**
  * What the editor needs from storage. The hosted implementation talks to the
@@ -17,6 +46,11 @@ export interface Backend {
   uploadImage(siteId: string, file: Blob, fileName: string): Promise<string>;
   /** Maps an image reference to a URL usable in rendered HTML (preview). */
   imageUrl(ref: ImageRef): string;
+  /** Present in API mode only; local mode has no AI, so the UI hides it and says why. */
+  ai?: AiBackend;
+  /** Publishes the saved document on Ministry Sites. API mode only. */
+  publish?(siteId: string): Promise<PublishResult>;
+  unpublish?(siteId: string): Promise<void>;
 }
 
 const ABSOLUTE = /^(https?:|data:|blob:)/i;
@@ -38,6 +72,15 @@ export function createApiBackend(getToken: GetToken): Backend {
       if (ABSOLUTE.test(ref.src)) return ref.src;
       return ref.src.startsWith("/") ? `${API_URL}${ref.src}` : ref.src;
     },
+    ai: {
+      usage: () => api.aiUsage(),
+      draft: (siteId, request) => api.aiDraft(siteId, request),
+      rewrite: (siteId, request) => api.aiRewrite(siteId, request),
+      theme: (siteId, request) => api.aiTheme(siteId, request),
+      altText: (siteId, assetKey) => api.aiAltText(siteId, assetKey),
+    },
+    publish: (siteId) => api.publish(siteId),
+    unpublish: (siteId) => api.unpublish(siteId),
   };
 }
 
@@ -93,7 +136,7 @@ export function createLocalBackend(): Backend {
   }
 
   function loaded(document: SiteDocument): LoadedSite {
-    return { site: { id: LOCAL_SITE_ID, slug: slugify(document.meta.orgName) }, document };
+    return { site: { id: LOCAL_SITE_ID, slug: slugify(document.meta.orgName), publishedUrl: null, publishedAt: null }, document };
   }
 
   return {
@@ -101,7 +144,15 @@ export function createLocalBackend(): Backend {
     async listSites() {
       const doc = readDocument();
       return doc
-        ? [{ id: LOCAL_SITE_ID, slug: slugify(doc.meta.orgName), orgName: doc.meta.orgName, updatedAt: new Date().toISOString() }]
+        ? [
+            {
+              id: LOCAL_SITE_ID,
+              slug: slugify(doc.meta.orgName),
+              orgName: doc.meta.orgName,
+              updatedAt: new Date().toISOString(),
+              publishedUrl: null,
+            },
+          ]
         : [];
     },
     async createSite(orgName) {

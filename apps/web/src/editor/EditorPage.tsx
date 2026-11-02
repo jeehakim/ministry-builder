@@ -1,22 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
-import { SiteDocument, type Section } from "@ministry/schema";
-import { AlertCircle, ArrowLeft, Download, ExternalLink, Loader2, Monitor, Rocket, Smartphone } from "lucide-react";
+import { SiteDocument, type AiDraftRequest, type AiDraftResponse, type AiDraftVariation, type Section } from "@ministry/schema";
+import { AlertCircle, ArrowLeft, ExternalLink, Monitor, Smartphone } from "lucide-react";
 import { toast } from "sonner";
+import type { SiteInfo } from "../api";
 import { useBackend } from "../backend-context";
-import { Brand } from "../components/Brand";
 import { PublishModal } from "../components/PublishModal";
-import { SaveIndicator } from "../components/SaveIndicator";
-import { ThemeToggle } from "../components/ThemeToggle";
-import { UserMenu } from "../components/UserMenu";
 import { buildExportZip, downloadBlob, exportFileName } from "../lib/exportZip";
+import { useLatest } from "../lib/useLatest";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AiProvider, useAi } from "./AiContext";
+import { DraftDialog } from "./DraftDialog";
 import { formatIssue } from "./documentOps";
+import { EditorHeader } from "./EditorHeader";
 import { SiteIdProvider } from "./EditorContext";
 import { FieldsForm } from "./FieldsForm";
 import { SECTION_FIELDS, SECTION_LABELS, type Obj } from "./fields";
@@ -25,6 +25,7 @@ import { SectionList, sectionTitle } from "./SectionList";
 import { SECTION_ICONS } from "./sectionMeta";
 import { SiteForm } from "./SiteForm";
 import { useSiteDocument } from "./useSiteDocument";
+import { VariationPicker } from "./VariationPicker";
 import { renderSite } from "@ministry/templates";
 
 type Tab = "sections" | "site";
@@ -36,32 +37,75 @@ export function EditorPage() {
 }
 
 function Editor({ siteId }: { siteId: string }) {
-  const backend = useBackend();
   const editor = useSiteDocument(siteId);
-  const [tab, setTab] = useState<Tab>("sections");
-  const [device, setDevice] = useState<Device>("desktop");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [publishOpen, setPublishOpen] = useState(false);
-  const [exporting, setExporting] = useState(false);
-
-  const ready = editor.load.kind === "ready" ? editor.load : null;
-  const doc = ready?.doc ?? null;
-  const siteSlug = ready?.site.slug ?? "site";
-
-  const selected: Section | undefined = useMemo(
-    () => doc?.sections.find((s) => s.id === selectedId) ?? doc?.sections[0],
-    [doc, selectedId],
-  );
 
   useEffect(() => {
     if (editor.save.kind === "error") toast.error("Could not save", { description: editor.save.message });
   }, [editor.save]);
 
+  if (editor.load.kind === "loading") return <LoadingScreen />;
+  if (editor.load.kind === "error") return <ErrorScreen message={editor.load.message} />;
+
+  return (
+    <SiteIdProvider value={siteId}>
+      <AiProvider>
+        <EditorView key={siteId} editor={editor} doc={editor.load.doc} site={editor.load.site} />
+      </AiProvider>
+    </SiteIdProvider>
+  );
+}
+
+type EditorState = ReturnType<typeof useSiteDocument>;
+type Dialog = "draft" | "variations" | null;
+
+function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteInfo }) {
+  const { editor, doc, site } = props;
+  const backend = useBackend();
+  const ai = useAi();
+  const [tab, setTab] = useState<Tab>("sections");
+  const [device, setDevice] = useState<Device>("desktop");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [dialog, setDialog] = useState<Dialog>(null);
+  // The last AI result stays here so the other variations remain reachable after one is chosen.
+  const [variations, setVariations] = useState<AiDraftResponse | null>(null);
+  const dialogNow = useLatest(dialog);
+  const siteSlug = site.slug;
+
+  const selected: Section | undefined = useMemo(
+    () => doc.sections.find((s) => s.id === selectedId) ?? doc.sections[0],
+    [doc, selectedId],
+  );
+
+  async function handleGenerate(request: AiDraftRequest) {
+    const result = await ai.runDraft(request);
+    if (!result) return;
+    setVariations(result);
+    // Only take over the screen if the user is still looking at the draft form.
+    if (dialogNow.current === "draft") {
+      setDialog("variations");
+      return;
+    }
+    toast.success(result.variations.length === 1 ? "Your draft is ready" : "Your drafts are ready", {
+      action: { label: "Review", onClick: () => setDialog("variations") },
+    });
+  }
+
+  function applyVariation(variation: AiDraftVariation) {
+    const before = doc;
+    editor.update(() => variation.document);
+    setSelectedId(null);
+    setDialog(null);
+    toast.success("Draft applied, you can edit every field", {
+      action: { label: "Undo", onClick: () => editor.update(() => before) },
+    });
+  }
+
   async function handleExport() {
-    if (!doc) return;
+    const parsed = SiteDocument.safeParse(doc);
     setExporting(true);
     try {
-      const parsed = SiteDocument.safeParse(doc);
       if (!parsed.success) throw new Error(`Fix this before exporting: ${formatIssue(parsed.error)}`);
       const blob = await buildExportZip(parsed.data, backend);
       downloadBlob(blob, exportFileName(parsed.data, siteSlug, backend.mode));
@@ -74,7 +118,6 @@ function Editor({ siteId }: { siteId: string }) {
   }
 
   function openPreviewTab() {
-    if (!doc) return;
     try {
       const { html } = renderSite(doc, { imageUrl: (ref) => backend.imageUrl(ref) });
       const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
@@ -85,44 +128,23 @@ function Editor({ siteId }: { siteId: string }) {
     }
   }
 
-  if (editor.load.kind === "loading") return <LoadingScreen />;
-  if (editor.load.kind === "error" || !doc) {
-    return <ErrorScreen message={editor.load.kind === "error" ? editor.load.message : "Site not found."} />;
-  }
-
   const issue = editor.save.kind === "invalid" ? editor.save.message : null;
   const SelectedIcon = selected ? SECTION_ICONS[selected.type] : null;
 
   return (
-    <SiteIdProvider value={siteId}>
+    <>
       <div className="flex h-dvh flex-col bg-background">
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button asChild variant="ghost" size="icon-sm" aria-label="Back to your sites">
-                <Link to="/">
-                  <ArrowLeft />
-                </Link>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Your sites</TooltipContent>
-          </Tooltip>
-          <Brand compact />
-          <Separator orientation="vertical" className="h-5!" />
-          <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{doc.meta.orgName || "Untitled site"}</h1>
-          <SaveIndicator state={editor.save} />
-          <Separator orientation="vertical" className="h-5!" />
-          <Button variant="outline" size="sm" disabled={exporting} onClick={() => void handleExport()}>
-            {exporting ? <Loader2 className="animate-spin" /> : <Download />}
-            Export
-          </Button>
-          <Button size="sm" onClick={() => setPublishOpen(true)}>
-            <Rocket />
-            Publish
-          </Button>
-          <ThemeToggle />
-          <UserMenu />
-        </header>
+        <EditorHeader
+          orgName={doc.meta.orgName}
+          save={editor.save}
+          site={site}
+          exporting={exporting}
+          hasVariations={variations !== null}
+          onDraft={() => setDialog("draft")}
+          onVariations={() => setDialog("variations")}
+          onExport={() => void handleExport()}
+          onPublish={() => setPublishOpen(true)}
+        />
 
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(340px,400px)_1fr]">
           <aside className="flex min-h-0 flex-col border-r bg-sidebar">
@@ -171,6 +193,7 @@ function Editor({ siteId }: { siteId: string }) {
                         key={selected.id}
                         value={selected}
                         fields={SECTION_FIELDS[selected.type]}
+                        sectionType={selected.type}
                         onChange={(next: Obj) => editor.replaceSection(next as Section)}
                       />
                     </section>
@@ -228,9 +251,26 @@ function Editor({ siteId }: { siteId: string }) {
           </main>
         </div>
 
-        <PublishModal open={publishOpen} busy={exporting} onOpenChange={setPublishOpen} onDownload={() => void handleExport()} />
+        <PublishModal
+          open={publishOpen}
+          busy={exporting}
+          site={site}
+          onOpenChange={setPublishOpen}
+          onDownload={() => void handleExport()}
+          onSiteChange={editor.updateSite}
+          beforePublish={editor.flush}
+        />
       </div>
-    </SiteIdProvider>
+
+      <DraftDialog open={dialog === "draft"} onOpenChange={(open) => setDialog(open ? "draft" : null)} onGenerate={(r) => void handleGenerate(r)} />
+      <VariationPicker
+        open={dialog === "variations"}
+        onOpenChange={(open) => setDialog(open ? "variations" : null)}
+        result={variations}
+        onUse={applyVariation}
+        onWriteAnother={() => setDialog("draft")}
+      />
+    </>
   );
 }
 
