@@ -221,9 +221,9 @@ function SectionView({
         <section className="section contact" id={s.id} {...attrs}>
           <div className="wrap">
             <h2>{s.heading}</h2>
-            {s.email || s.phone || s.address ? (
+            {(s.email && s.showEmail) || s.phone || s.address ? (
               <ul className="stats">
-                {s.email ? <li className="stat"><a href={`mailto:${s.email}`}>{s.email}</a></li> : null}
+                {s.email && s.showEmail ? <li className="stat"><a href={`mailto:${s.email}`}>{s.email}</a></li> : null}
                 {s.phone ? <li className="stat"><a href={`tel:${s.phone}`}>{s.phone}</a></li> : null}
                 {s.address ? <li className="stat addr">{s.address}</li> : null}
               </ul>

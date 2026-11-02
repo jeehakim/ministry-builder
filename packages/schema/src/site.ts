@@ -147,7 +147,10 @@ export const ContactSection = z.object({
   ...base,
   type: z.literal("contact"),
   heading: z.string().default("Contact"),
+  /** Where contact-form messages are delivered. Private unless `showEmail` is on. */
   email: z.string().default(""),
+  /** Print the address on the public page (exposes it to scrapers). Off by default. */
+  showEmail: z.boolean().default(false),
   phone: z.string().default(""),
   address: z.string().default(""),
   /** Optional form endpoint (Web3Forms, Formspree, or the hosted-tier Worker). */

@@ -228,7 +228,7 @@ function SectionView({
             <div>
               <h2>{s.heading}</h2>
               <ul className="contact-list">
-                {s.email ? <li><a href={`mailto:${s.email}`}>{s.email}</a></li> : null}
+                {s.email && s.showEmail ? <li><a href={`mailto:${s.email}`}>{s.email}</a></li> : null}
                 {s.phone ? <li><a href={`tel:${s.phone}`}>{s.phone}</a></li> : null}
                 {s.address ? <li>{s.address}</li> : null}
               </ul>

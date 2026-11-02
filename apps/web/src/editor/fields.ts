@@ -7,6 +7,8 @@ export type FieldSpec =
   /** `fixed` text is the same in every language (URLs, email, phone), so translations cannot edit it. */
   | { kind: "text"; key: string; label: string; multiline?: boolean; optional?: boolean; placeholder?: string; hint?: string; fixed?: boolean }
   | { kind: "image"; key: string; label: string }
+  /** A yes/no switch. Shared by every language. */
+  | { kind: "boolean"; key: string; label: string; hint?: string }
   /** An optional single link; `blank` is what "Add" creates. */
   | { kind: "link"; key: string; label: string; blank: { label: string; href: string } }
   | { kind: "list"; key: string; label: string; itemLabel: string; titleKey: string; fields: FieldSpec[]; blank: Obj };
@@ -123,7 +125,8 @@ export const SECTION_FIELDS: Record<SectionType, FieldSpec[]> = {
   ],
   contact: [
     heading,
-    { kind: "text", key: "email", label: "Email", fixed: true, hint: "Messages from the contact form are emailed here" },
+    { kind: "text", key: "email", label: "Email", fixed: true, hint: "Messages from the contact form are delivered here. Kept private unless you show it below." },
+    { kind: "boolean", key: "showEmail", label: "Show the email address on the page", hint: "Off keeps it private; visitors use the form instead. On exposes it to spam scrapers." },
     { kind: "text", key: "phone", label: "Phone", fixed: true },
     { kind: "text", key: "address", label: "Address", multiline: true },
     {

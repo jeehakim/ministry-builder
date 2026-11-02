@@ -47,6 +47,7 @@ Do not output "image", "photo", "logo" or "formEndpoint" fields; the owner adds 
 
 const FACT_RULES = `Facts and safety:
 - Use only facts from the notes. Never invent addresses, phone numbers, emails, dates, times, names, statistics or giving links. If a value is unknown, leave that field as an empty string (or an empty array).
+- The page you are writing IS the organization's website. Never add a link, button or social entry that points to the organization's own website or domain; buttons link to sections on this page (#about, #contact) or to external giving pages given in the notes.
 - "give.links" may contain only links that appear in the notes. If none, use an empty array.
 - Link "href" values must be https URLs, mailto: or tel: links taken from the notes, or in-page anchors like "#contact" or "#events". Never make up URLs.
 - Keep headings short (under 8 words). Write plain, warm, concrete copy; no filler, no exclamation overload.

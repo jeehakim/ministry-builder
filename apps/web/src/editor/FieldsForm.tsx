@@ -82,6 +82,26 @@ function FieldView({
         />
       );
 
+    case "boolean": {
+      const id = `${field.key}-${sectionType ?? "field"}`;
+      return (
+        <div className="flex items-start gap-3 rounded-lg border bg-muted/30 p-2.5">
+          <input
+            id={id}
+            type="checkbox"
+            className="mt-0.5 size-4 shrink-0 accent-brand"
+            checked={current === true}
+            disabled={translating}
+            onChange={(e) => onChange(withKey(value, field.key, e.target.checked))}
+          />
+          <label htmlFor={id} className="space-y-0.5 text-sm">
+            <span className="block font-medium">{field.label}</span>
+            {field.hint ? <span className="block text-xs text-muted-foreground">{field.hint}</span> : null}
+          </label>
+        </div>
+      );
+    }
+
     case "image":
       return (
         <ImageField
