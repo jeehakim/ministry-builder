@@ -5,6 +5,13 @@ import realApp from "../src/index";
 import { call, jsonInit } from "./helpers";
 
 type CreatedSite = { id: string; slug: string; versionId: string };
+type CreateResponse = { site: { id: string; slug: string; orgId: string }; versionId: string; document: unknown };
+
+/** Unwraps the create envelope into the flat shape the rest of the tests use. */
+async function createdFrom(res: Response): Promise<CreatedSite> {
+  const body = (await res.json()) as CreateResponse;
+  return { id: body.site.id, slug: body.site.slug, versionId: body.versionId };
+}
 
 async function createSite(user: string, orgName: string, slug?: string): Promise<Response> {
   return call(user, "/sites", jsonInit("POST", slug ? { orgName, slug } : { orgName }));
@@ -40,7 +47,7 @@ describe("sites", () => {
   it("creates a site with a first version and lists it for the owner only", async () => {
     const res = await createSite("user_a", "Grace Church");
     expect(res.status).toBe(201);
-    const created = (await res.json()) as CreatedSite;
+    const created = await createdFrom(res);
     expect(created.slug).toBe("grace-church");
 
     const list = (await (await call("user_a", "/sites")).json()) as { sites: { id: string }[] };
@@ -55,21 +62,21 @@ describe("sites", () => {
   });
 
   it("generates a unique slug for a repeated name and 409s on an explicit duplicate", async () => {
-    const first = (await (await createSite("user_c", "Hope Mission")).json()) as CreatedSite;
-    const second = (await (await createSite("user_d", "Hope Mission")).json()) as CreatedSite;
+    const first = await createdFrom(await createSite("user_c", "Hope Mission"));
+    const second = await createdFrom(await createSite("user_d", "Hope Mission"));
     expect(second.slug).not.toBe(first.slug);
     expect((await createSite("user_d", "Other", first.slug)).status).toBe(409);
     expect((await createSite("user_d", "Other", "Bad Slug!")).status).toBe(400);
   });
 
   it("hides sites from non-owners but not from admins", async () => {
-    const created = (await (await createSite("user_e", "Private Org")).json()) as CreatedSite;
+    const created = await createdFrom(await createSite("user_e", "Private Org"));
     expect((await call("user_f:member", `/sites/${created.id}`)).status).toBe(404);
     expect((await call("staff:admin", `/sites/${created.id}`)).status).toBe(200);
   });
 
   it("appends a version on PUT and moves current_version_id", async () => {
-    const created = (await (await createSite("user_g", "Versioned")).json()) as CreatedSite;
+    const created = await createdFrom(await createSite("user_g", "Versioned"));
     const doc = emptySiteDocument("Versioned");
     doc.meta.tagline = "Updated";
 
@@ -91,7 +98,7 @@ describe("sites", () => {
   });
 
   it("rejects invalid documents and malformed JSON", async () => {
-    const created = (await (await createSite("user_h", "Strict")).json()) as CreatedSite;
+    const created = await createdFrom(await createSite("user_h", "Strict"));
     const bad = await call("user_h", `/sites/${created.id}/document`, jsonInit("PUT", { meta: {}, sections: [{ type: "nope" }] }));
     expect(bad.status).toBe(400);
     const notJson = await call("user_h", `/sites/${created.id}/document`, {
@@ -105,7 +112,7 @@ describe("sites", () => {
 
 describe("assets", () => {
   it("uploads, serves with cache headers, and deletes an image", async () => {
-    const site = (await (await createSite("user_i", "Pictures")).json()) as CreatedSite;
+    const site = await createdFrom(await createSite("user_i", "Pictures"));
     const up = await call("user_i", `/sites/${site.id}/assets`, { method: "POST", body: formWithFile(PNG, "image/png") });
     expect(up.status).toBe(201);
     const asset = (await up.json()) as { id: string; key: string; url: string };
@@ -127,7 +134,7 @@ describe("assets", () => {
   });
 
   it("rejects disallowed types, spoofed content, oversize files and missing fields", async () => {
-    const site = (await (await createSite("user_k", "Uploads")).json()) as CreatedSite;
+    const site = await createdFrom(await createSite("user_k", "Uploads"));
     const post = (body: FormData) => call("user_k", `/sites/${site.id}/assets`, { method: "POST", body });
 
     expect((await post(formWithFile(PNG, "image/gif"))).status).toBe(415);
@@ -137,7 +144,7 @@ describe("assets", () => {
   });
 
   it("does not let a stranger upload to someone else's site", async () => {
-    const site = (await (await createSite("user_l", "Owned")).json()) as CreatedSite;
+    const site = await createdFrom(await createSite("user_l", "Owned"));
     const res = await call("user_m", `/sites/${site.id}/assets`, { method: "POST", body: formWithFile(PNG, "image/png") });
     expect(res.status).toBe(404);
   });

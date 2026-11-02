@@ -120,7 +120,8 @@ siteRoutes.post("/sites", bodyLimit({ maxSize: 16 * 1024, onError: (c) => c.json
     throw err;
   }
 
-  return c.json({ id: siteId, orgId, slug, versionId, document }, 201);
+  // Same envelope as GET /sites/:id so the client can navigate straight into the editor.
+  return c.json({ site: { id: siteId, orgId, slug }, versionId, document }, 201);
 });
 
 siteRoutes.get("/sites/:id", async (c) => {
