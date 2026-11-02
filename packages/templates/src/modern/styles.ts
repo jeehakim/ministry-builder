@@ -1,5 +1,6 @@
 import type { Theme } from "@ministry/schema";
 import { themeVars } from "../util";
+import { CONTACT_FORM_CSS } from "../ContactForm";
 
 export function modernCss(theme: Theme): string {
   return `${themeVars(theme)}
@@ -85,13 +86,11 @@ section[id]{scroll-margin-top:96px}
 @media(min-width:860px){.contact .wrap{grid-template-columns:1fr 1fr;gap:64px}}
 .contact-list li{margin-bottom:10px}
 .social{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:20px}
-.form{display:grid;gap:12px}
-.form input,.form textarea{width:100%;padding:12px 14px;border:1px solid color-mix(in srgb,var(--text) 30%,transparent);border-radius:calc(var(--radius) * .6);font:inherit;color:var(--text);background:var(--bg)}
-.form button{justify-self:start;cursor:pointer;font:inherit;font-weight:600}
 .foot{padding:32px 0;border-top:1px solid color-mix(in srgb,var(--text) 10%,transparent);font-size:.9rem;opacity:.75}
 
 .lang-switch{display:flex;gap:2px;font-size:.8rem;margin-left:auto}
 .lang-switch a{padding:4px 8px;border-radius:999px;text-decoration:none;color:inherit;opacity:.7}
 .lang-switch a[aria-current]{background:color-mix(in oklch, var(--primary) 12%, transparent);opacity:1;font-weight:600}
-`;
+
+${CONTACT_FORM_CSS}`;
 }

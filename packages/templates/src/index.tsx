@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { SiteDocument, type ImageRef } from "@ministry/schema";
 import type { RenderOptions, Template } from "./types";
+import { uiStrings as uiStringsFor } from "./i18n";
 import { ClassicBody } from "./classic/Classic";
 import { classicCss } from "./classic/styles";
 import { ModernBody } from "./modern/Modern";
@@ -9,6 +10,7 @@ import { BoldBody } from "./bold/Bold";
 import { boldCss } from "./bold/styles";
 
 export type { LanguageLink, RenderOptions, Template } from "./types";
+export { uiStrings, type UiStrings } from "./i18n";
 
 export const classic: Template = {
   id: "classic",
@@ -81,7 +83,7 @@ export function collectImages(doc: SiteDocument): ImageRef[] {
 export function renderSite(input: SiteDocument, options: RenderOptions): RenderedSite {
   const doc = SiteDocument.parse(input);
   const template = getTemplate(doc.theme.templateId);
-  const body = renderToStaticMarkup(<template.Body doc={doc} options={options} />);
+  const body = renderToStaticMarkup(<template.Body doc={doc} options={{ ...options, language: doc.meta.language }} />);
   const title = doc.meta.tagline ? `${doc.meta.orgName} — ${doc.meta.tagline}` : doc.meta.orgName;
   const html = `<!doctype html>
 <html lang="${escapeHtml(doc.meta.language)}">
@@ -99,4 +101,34 @@ ${body}
 </html>
 `;
   return { html, images: collectImages(doc) };
+}
+
+/** A minimal "thank you" page shown after the contact form is submitted, in the site's theme and language. */
+export function renderThanksPage(input: SiteDocument, options: { backHref: string; languageLinks?: RenderOptions["languageLinks"] }): string {
+  const doc = SiteDocument.parse(input);
+  const template = getTemplate(doc.theme.templateId);
+  const t = uiStringsFor(doc.meta.language);
+  const title = `${t.thanksTitle} — ${doc.meta.orgName}`;
+  return `<!doctype html>
+<html lang="${escapeHtml(doc.meta.language)}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>${escapeHtml(title)}</title>
+<style>${template.css(doc.theme)}
+.thanks{min-height:70vh;display:grid;place-items:center;text-align:center;padding:48px 20px}
+.thanks .card{max-width:34rem}
+.thanks h1{font-size:clamp(2rem,5vw,3rem)}
+.thanks a.btn{display:inline-block;margin-top:16px;padding:12px 22px;border-radius:var(--radius);background:var(--primary);color:#fff;text-decoration:none;font-weight:600}</style>
+</head>
+<body>
+<main class="thanks"><div class="card">
+<h1>${escapeHtml(t.thanksTitle)}</h1>
+<p>${escapeHtml(t.thanksBody)}</p>
+<a class="btn" href="${escapeHtml(options.backHref)}">${escapeHtml(t.back)}</a>
+</div></main>
+</body>
+</html>
+`;
 }

@@ -1,5 +1,6 @@
 import type { Theme } from "@ministry/schema";
 import { themeVars } from "../util";
+import { CONTACT_FORM_CSS } from "../ContactForm";
 
 /** Black or white, whichever reads better on `color`. Anything that is not a hex color falls back to near-black. */
 function onColor(color: string): string {
@@ -112,12 +113,10 @@ p{margin:0 0 1em}
 .stat a{color:inherit;text-decoration:none}
 .stat a:hover{color:var(--primary);text-decoration:underline;text-underline-offset:5px}
 .social{display:flex;flex-wrap:wrap;gap:8px 24px;margin:0 0 40px}
-.form{display:grid;gap:12px;max-width:640px}
-.form input,.form textarea{width:100%;padding:14px 16px;border:1px solid color-mix(in srgb,var(--text) 50%,transparent);border-radius:calc(var(--radius) * .6);font:inherit;color:var(--text);background:var(--bg)}
-.form button{justify-self:start}
 .foot{padding:32px 0;border-top:1px solid color-mix(in srgb,var(--text) 12%,transparent);font-size:.9rem}
 .foot .wrap{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 32px}
 .foot p{margin:0;opacity:.8}
 .foot p span::before{content:"\\00B7";margin:0 .6em}
-`;
+
+${CONTACT_FORM_CSS}`;
 }
