@@ -3,6 +3,8 @@ import { SiteDocument, type ImageRef } from "@ministry/schema";
 import type { RenderOptions, Template } from "./types";
 import { ClassicBody } from "./classic/Classic";
 import { classicCss } from "./classic/styles";
+import { ModernBody } from "./modern/Modern";
+import { modernCss } from "./modern/styles";
 
 export type { RenderOptions, Template } from "./types";
 
@@ -15,7 +17,23 @@ export const classic: Template = {
   Body: ClassicBody,
 };
 
-export const templates: Record<string, Template> = { classic };
+export const modern: Template = {
+  id: "modern",
+  name: "Modern",
+  description: "Airy, editorial sans-serif layout with a sticky top bar and a split hero. Good for newer ministries and nonprofits.",
+  themeDefaults: {
+    heroStyle: "split",
+    radius: "large",
+    headingFont: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+  },
+  css: modernCss,
+  Body: ModernBody,
+};
+
+export const templates: Record<string, Template> = { classic, modern };
+
+/** Registry keys in display order, for other packages (pickers, validation). */
+export const TEMPLATE_IDS: string[] = Object.keys(templates);
 
 export function getTemplate(id: string): Template {
   return templates[id] ?? classic;

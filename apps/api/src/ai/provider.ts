@@ -1,0 +1,60 @@
+import type { Theme } from "@ministry/schema";
+
+/** What one provider call consumed. Written to `ai_usage` by the routes. */
+export type AiCallUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  model: string;
+  provider: string;
+};
+
+export type TemplateChoice = { id: string; name: string; description: string };
+
+export type DraftInput = {
+  notes: string;
+  language: string;
+  variations: number;
+  /** Template ids the model may choose from (read from the registry at request time). */
+  templates: TemplateChoice[];
+  orgName: string;
+  styleNotes?: string;
+  /** R2 key in the IMAGES bucket of a design reference image. */
+  referenceAssetKey?: string;
+};
+
+export type RewriteInput = {
+  text: string;
+  instruction: string;
+  context?: string;
+};
+
+export type ThemeInput = {
+  templates: TemplateChoice[];
+  description?: string;
+  referenceAssetKey?: string;
+  currentTheme?: Theme;
+};
+
+export type AltTextInput = {
+  assetKey: string;
+  orgName: string;
+};
+
+export interface AiProvider {
+  /** `document` is unvalidated JSON; the route validates it against `SiteDocument`. */
+  draft(input: DraftInput): Promise<{ variations: { label: string; document: unknown }[]; usage: AiCallUsage }>;
+  rewrite(input: RewriteInput): Promise<{ text: string; usage: AiCallUsage }>;
+  theme(input: ThemeInput): Promise<{ theme: Theme; rationale: string; usage: AiCallUsage }>;
+  altText(input: AltTextInput): Promise<{ alt: string; usage: AiCallUsage }>;
+}
+
+/** A provider or network failure. Routes answer 502 with `message`; `detail` is only logged. */
+export class AiProviderError extends Error {
+  constructor(
+    message: string,
+    readonly detail?: unknown,
+  ) {
+    super(message);
+    this.name = "AiProviderError";
+  }
+}

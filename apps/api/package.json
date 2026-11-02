@@ -14,8 +14,10 @@
   "dependencies": {
     "@clerk/backend": "^3.26.5",
     "@ministry/schema": "workspace:*",
+    "@ministry/templates": "workspace:*",
     "drizzle-orm": "^0.45.4",
     "hono": "^4.13.16",
+    "openai": "^7.47.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {

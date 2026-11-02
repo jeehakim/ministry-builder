@@ -7,11 +7,21 @@
   "observability": { "enabled": true },
 
   // Production hostname on the shofar.io zone (DNS and TLS managed by Cloudflare).
-  "routes": [{ "pattern": "api.build.shofar.io", "custom_domain": true }],
+  // sites.shofar.io serves published sites straight from the PUBLISHED bucket (see src/hosting.ts).
+  "routes": [
+    { "pattern": "api.build.shofar.io", "custom_domain": true },
+    { "pattern": "sites.shofar.io", "custom_domain": true }
+  ],
 
   "vars": {
     // Origin of the web app allowed by CORS. Override per environment.
-    "ALLOWED_ORIGIN": "https://build.shofar.io"
+    "ALLOWED_ORIGIN": "https://build.shofar.io",
+    // Chat model used by the AI copilot. Overridable per environment.
+    "OPENAI_MODEL": "gpt-5-mini",
+    // AI calls allowed per user per UTC day.
+    "AI_DAILY_LIMIT": "30",
+    // Hostname that serves published sites (path form: sites.shofar.io/<slug>/).
+    "PUBLIC_SITES_HOST": "sites.shofar.io"
   },
 
   "d1_databases": [
@@ -24,5 +34,9 @@
     }
   ],
 
-  "r2_buckets": [{ "binding": "IMAGES", "bucket_name": "ministry-images" }]
+  "r2_buckets": [
+    { "binding": "IMAGES", "bucket_name": "ministry-images" },
+    // Rendered sites: published/<siteId>/index.html and published/<siteId>/images/*
+    { "binding": "PUBLISHED", "bucket_name": "ministry-published" }
+  ]
 }

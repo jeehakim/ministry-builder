@@ -1,6 +1,7 @@
 import { verifyToken } from "@clerk/backend";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
+import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
 import { users } from "./db/schema";
 import type { AppEnv, AuthUser } from "./types";
@@ -12,8 +13,44 @@ function bearerToken(header: string | undefined): string | null {
   return token;
 }
 
-/** Verifies the Clerk session JWT and makes the matching `users` row available as `c.var.user`. */
+export const STAFF_USER_ID = "staff-bot";
+
+/** Constant-time string compare. Hashing first gives both sides the same length, which timingSafeEqual requires. */
+async function tokensMatch(given: string, expected: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [a, b] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(given)),
+    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+  ]);
+  return crypto.subtle.timingSafeEqual(a, b);
+}
+
+/**
+ * Authenticates a request as the staff automation user (admin) when it carries the shared
+ * X-Staff-Token. An unset or empty STAFF_API_TOKEN disables this path entirely.
+ */
+async function staffUser(c: Context<AppEnv>): Promise<AuthUser | null> {
+  const expected = c.env.STAFF_API_TOKEN;
+  const given = c.req.header("X-Staff-Token");
+  if (!expected || !given || !(await tokensMatch(given, expected))) return null;
+  await drizzle(c.env.DB)
+    .insert(users)
+    .values({ id: STAFF_USER_ID, email: null, role: "admin" })
+    .onConflictDoUpdate({ target: users.id, set: { role: "admin" } });
+  return { id: STAFF_USER_ID, email: null, role: "admin" };
+}
+
+/**
+ * Makes the matching `users` row available as `c.var.user`. Accepts either the staff token
+ * or a Clerk session JWT, which is verified here.
+ */
 export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
+  const staff = await staffUser(c);
+  if (staff) {
+    c.set("user", staff);
+    return next();
+  }
+
   const token = bearerToken(c.req.header("Authorization"));
   if (!token) return c.json({ error: "Missing bearer token" }, 401);
 

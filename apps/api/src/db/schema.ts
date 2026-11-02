@@ -1,3 +1,4 @@
+import { AI_ACTIONS } from "@ministry/schema";
 import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
@@ -48,6 +49,9 @@ export const sites = sqliteTable(
     status: text("status").notNull().default("draft"),
     /** Points at site_versions.id. Deliberately not a foreign key: it would be circular with site_versions.site_id. */
     currentVersionId: text("current_version_id"),
+    /** Set while the site is live on the public sites host; both cleared on unpublish. */
+    publishedAt: integer("published_at", { mode: "timestamp_ms" }),
+    publishedPath: text("published_path"),
     createdAt: createdAt(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" })
       .notNull()
@@ -93,5 +97,25 @@ export const assets = sqliteTable(
   (t) => [index("assets_site_id_idx").on(t.siteId), uniqueIndex("assets_r2_key_unique").on(t.r2Key)],
 );
 
+/** One row per AI call, written after the provider answers. The daily quota counts these rows. */
+export const aiUsage = sqliteTable(
+  "ai_usage",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    siteId: text("site_id").references(() => sites.id),
+    action: text("action", { enum: AI_ACTIONS }).notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [index("ai_usage_user_id_created_at_idx").on(t.userId, t.createdAt)],
+);
+
 export type User = typeof users.$inferSelect;
 export type Site = typeof sites.$inferSelect;
+export type Organization = typeof organizations.$inferSelect;

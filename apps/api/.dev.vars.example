@@ -1,3 +1,10 @@
 CLERK_SECRET_KEY=
 # OpenAI key for the AI copilot (optional until Phase 1 ships). Production value lives on the Worker as a secret.
 OPENAI_API_KEY=
+# Chat model for the AI copilot. wrangler.jsonc sets the default (gpt-5-mini); uncomment to override locally.
+# OPENAI_MODEL=gpt-5-mini
+# AI calls allowed per user per UTC day (default 30 from wrangler.jsonc).
+# AI_DAILY_LIMIT=30
+# Shared token for staff automation. Send it as the X-Staff-Token header to act as the admin user "staff-bot".
+# Leave unset to disable staff access. Production value lives on the Worker as a secret.
+STAFF_API_TOKEN=

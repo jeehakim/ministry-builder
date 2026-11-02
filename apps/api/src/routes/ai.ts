@@ -1,0 +1,271 @@
+import {
+  AiAltTextRequest,
+  AiDraftRequest,
+  AiRewriteRequest,
+  AiThemeRequest,
+  SiteDocument,
+  Theme,
+  type AiAction,
+  type AiAltTextResponse,
+  type AiDraftResponse,
+  type AiRewriteResponse,
+  type AiThemeResponse,
+  type AiUsageResponse,
+} from "@ministry/schema";
+import { templates } from "@ministry/templates";
+import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/d1";
+import type { Context } from "hono";
+import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import type { z } from "zod";
+import { isSiteAssetKey, loadAuthorizedSite } from "../access";
+import { AiProviderError, createProvider, type AiCallUsage, type AiProvider } from "../ai";
+import type { TemplateChoice } from "../ai/provider";
+import { dailyLimit, usedToday, utcDayWindow } from "../ai/usage";
+import { aiUsage, organizations, siteVersions, type Site } from "../db/schema";
+import { newId } from "../ids";
+import type { AppEnv } from "../types";
+
+const MAX_AI_BODY_BYTES = 32 * 1024;
+const tooLarge = bodyLimit({ maxSize: MAX_AI_BODY_BYTES, onError: (c) => c.json({ error: "Body too large" }, 413) });
+
+type Ctx = Context<AppEnv>;
+type Guard = { site: Site; provider: AiProvider; orgName: string };
+
+function templateChoices(): TemplateChoice[] {
+  return Object.values(templates).map(({ id, name, description }) => ({ id, name, description }));
+}
+
+function describeIssues(error: z.ZodError): string {
+  return error.issues
+    .slice(0, 5)
+    .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+    .join("; ");
+}
+
+/** Keeps a model-chosen template id inside the registry. */
+function knownTemplateId(id: string): string {
+  if (Object.hasOwn(templates, id)) return id;
+  return templateChoices()[0]?.id ?? "classic";
+}
+
+async function parseBody<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.output<S> | Response> {
+  const body: unknown = await c.req.json().catch(() => undefined);
+  if (body === undefined) return c.json({ error: "Body must be valid JSON" }, 400);
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) return c.json({ error: `Invalid request: ${describeIssues(parsed.error)}` }, 400);
+  return parsed.data;
+}
+
+/**
+ * Everything that must hold before a model call: site access, a configured provider and quota.
+ * Returns the loaded pieces or the Response to send.
+ */
+async function guard(c: Ctx): Promise<Guard | Response> {
+  const db = drizzle(c.env.DB);
+  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id") ?? "");
+  if (!site) return c.json({ error: "Site not found" }, 404);
+  const [org] = await db
+    .select({ name: organizations.name })
+    .from(organizations)
+    .where(eq(organizations.id, site.orgId))
+    .limit(1);
+
+  const provider = createProvider(c.env);
+  if (!provider) return c.json({ error: "AI is not configured on this server" }, 503);
+
+  const used = await usedToday(db, c.var.user.id);
+  const limit = dailyLimit(c.env);
+  if (used >= limit) {
+    return c.json(
+      {
+        error: "Daily AI limit reached. It resets at midnight UTC.",
+        used,
+        limit,
+        resetsAt: utcDayWindow().resetsAt.toISOString(),
+      },
+      429,
+    );
+  }
+  return { site, provider, orgName: org?.name ?? "Your organization" };
+}
+
+function usageRow(userId: string, siteId: string, action: AiAction, usage: AiCallUsage) {
+  return {
+    id: newId("aiu"),
+    userId,
+    siteId,
+    action,
+    provider: usage.provider,
+    model: usage.model,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+  };
+}
+
+/** Runs a provider call, logging tokens and latency; maps any failure to a 502 Response. */
+async function callProvider<T extends { usage: AiCallUsage }>(
+  c: Ctx,
+  action: AiAction,
+  call: () => Promise<T>,
+): Promise<T | Response> {
+  const startedAt = Date.now();
+  try {
+    const result = await call();
+    console.log(
+      JSON.stringify({
+        event: "ai_call",
+        action,
+        provider: result.usage.provider,
+        model: result.usage.model,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+        ms: Date.now() - startedAt,
+      }),
+    );
+    return result;
+  } catch (err) {
+    console.error(JSON.stringify({ event: "ai_call_failed", action, ms: Date.now() - startedAt }), err);
+    const message = err instanceof AiProviderError ? err.message : "The AI service is unavailable right now. Please try again in a moment.";
+    return c.json({ error: message }, 502);
+  }
+}
+
+/** Resolves an optional image key for this site: Response on a bad key, key (or undefined) otherwise. */
+async function checkImageKey(c: Ctx, siteId: string, key: string | undefined): Promise<string | undefined | Response> {
+  if (key === undefined) return undefined;
+  if (!isSiteAssetKey(siteId, key)) return c.json({ error: "Image does not belong to this site" }, 400);
+  if (!(await c.env.IMAGES.head(key))) return c.json({ error: "Image not found" }, 404);
+  return key;
+}
+
+export const aiRoutes = new Hono<AppEnv>();
+
+aiRoutes.get("/ai/usage", async (c) => {
+  const used = await usedToday(drizzle(c.env.DB), c.var.user.id);
+  const body: AiUsageResponse = {
+    used,
+    limit: dailyLimit(c.env),
+    resetsAt: utcDayWindow().resetsAt.toISOString(),
+    available: createProvider(c.env) !== null,
+  };
+  return c.json(body);
+});
+
+aiRoutes.post("/sites/:id/ai/draft", tooLarge, async (c) => {
+  const g = await guard(c);
+  if (g instanceof Response) return g;
+  const body = await parseBody(c, AiDraftRequest);
+  if (body instanceof Response) return body;
+  const referenceAssetKey = await checkImageKey(c, g.site.id, body.referenceAssetKey);
+  if (referenceAssetKey instanceof Response) return referenceAssetKey;
+
+  const result = await callProvider(c, "draft", () =>
+    g.provider.draft({
+      notes: body.notes,
+      language: body.language,
+      variations: body.variations,
+      templates: templateChoices(),
+      orgName: g.orgName,
+      styleNotes: body.styleNotes,
+      referenceAssetKey,
+    }),
+  );
+  if (result instanceof Response) return result;
+
+  const db = drizzle(c.env.DB);
+  const variationGroupId = newId("vgrp");
+  const variations: AiDraftResponse["variations"] = [];
+  for (const candidate of result.variations) {
+    const parsed = SiteDocument.safeParse(candidate.document);
+    if (!parsed.success) {
+      console.error("Dropped an invalid AI variation", describeIssues(parsed.error));
+      continue;
+    }
+    const document = parsed.data;
+    // The organization's name is fixed by the site, whatever the model wrote.
+    document.meta.orgName = g.orgName;
+    document.theme.templateId = knownTemplateId(document.theme.templateId);
+    variations.push({ versionId: newId("ver"), label: candidate.label, document });
+  }
+
+  // Tokens were spent whether or not the output was usable, so the call counts against the quota.
+  const usage = db.insert(aiUsage).values(usageRow(c.var.user.id, g.site.id, "draft", result.usage));
+  if (variations.length === 0) {
+    await usage;
+    return c.json({ error: "The AI returned drafts we could not use. Please try again." }, 502);
+  }
+
+  // Variations are stored as versions only; current_version_id moves when the user picks one.
+  const [firstVersion, ...otherVersions] = variations.map((v) =>
+    db.insert(siteVersions).values({
+      id: v.versionId,
+      siteId: g.site.id,
+      document: JSON.stringify(v.document),
+      variationGroupId,
+      createdBy: c.var.user.id,
+    }),
+  );
+  await db.batch([firstVersion!, ...otherVersions, usage]);
+
+  const response: AiDraftResponse = { variationGroupId, variations };
+  return c.json(response);
+});
+
+aiRoutes.post("/sites/:id/ai/rewrite", tooLarge, async (c) => {
+  const g = await guard(c);
+  if (g instanceof Response) return g;
+  const body = await parseBody(c, AiRewriteRequest);
+  if (body instanceof Response) return body;
+
+  const result = await callProvider(c, "rewrite", () => g.provider.rewrite(body));
+  if (result instanceof Response) return result;
+
+  await drizzle(c.env.DB).insert(aiUsage).values(usageRow(c.var.user.id, g.site.id, "rewrite", result.usage));
+  const response: AiRewriteResponse = { text: result.text };
+  return c.json(response);
+});
+
+aiRoutes.post("/sites/:id/ai/theme", tooLarge, async (c) => {
+  const g = await guard(c);
+  if (g instanceof Response) return g;
+  const body = await parseBody(c, AiThemeRequest);
+  if (body instanceof Response) return body;
+  const referenceAssetKey = await checkImageKey(c, g.site.id, body.referenceAssetKey);
+  if (referenceAssetKey instanceof Response) return referenceAssetKey;
+
+  const result = await callProvider(c, "theme", () =>
+    g.provider.theme({ templates: templateChoices(), description: body.description, referenceAssetKey }),
+  );
+  if (result instanceof Response) return result;
+
+  await drizzle(c.env.DB).insert(aiUsage).values(usageRow(c.var.user.id, g.site.id, "theme", result.usage));
+  const parsed = Theme.safeParse(result.theme);
+  if (!parsed.success) {
+    console.error("Invalid AI theme", describeIssues(parsed.error));
+    return c.json({ error: "The AI returned a theme we could not use. Please try again." }, 502);
+  }
+  const response: AiThemeResponse = {
+    theme: { ...parsed.data, templateId: knownTemplateId(parsed.data.templateId) },
+    rationale: result.rationale,
+  };
+  return c.json(response);
+});
+
+aiRoutes.post("/sites/:id/ai/alt-text", tooLarge, async (c) => {
+  const g = await guard(c);
+  if (g instanceof Response) return g;
+  const body = await parseBody(c, AiAltTextRequest);
+  if (body instanceof Response) return body;
+  const assetKey = await checkImageKey(c, g.site.id, body.assetKey);
+  if (assetKey instanceof Response) return assetKey;
+  if (assetKey === undefined) return c.json({ error: "assetKey is required" }, 400);
+
+  const result = await callProvider(c, "alt_text", () => g.provider.altText({ assetKey, orgName: g.orgName }));
+  if (result instanceof Response) return result;
+
+  await drizzle(c.env.DB).insert(aiUsage).values(usageRow(c.var.user.id, g.site.id, "alt_text", result.usage));
+  const response: AiAltTextResponse = { alt: result.alt };
+  return c.json(response);
+});

@@ -6,9 +6,10 @@ import { bodyLimit } from "hono/body-limit";
 import { loadAuthorizedSite } from "../access";
 import { organizations, siteVersions, sites } from "../db/schema";
 import { newId } from "../ids";
+import { publishedUrlFor } from "../published";
 import type { AppEnv } from "../types";
 
-const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
+export const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 /** Subdomains we keep for the platform itself (<slug>.sites.shofar.io). */
 const RESERVED_SLUGS = new Set(["www", "api", "app", "admin", "build", "mail", "sites"]);
 const MAX_DOCUMENT_BYTES = 1024 * 1024;
@@ -47,6 +48,8 @@ siteRoutes.get("/sites", async (c) => {
       plan: sites.plan,
       status: sites.status,
       currentVersionId: sites.currentVersionId,
+      publishedAt: sites.publishedAt,
+      publishedPath: sites.publishedPath,
       createdAt: sites.createdAt,
       updatedAt: sites.updatedAt,
     })
@@ -54,7 +57,9 @@ siteRoutes.get("/sites", async (c) => {
     .innerJoin(organizations, eq(sites.orgId, organizations.id))
     .where(eq(organizations.ownerUserId, c.var.user.id))
     .orderBy(desc(sites.updatedAt));
-  return c.json({ sites: rows });
+  return c.json({
+    sites: rows.map(({ publishedPath, ...row }) => ({ ...row, publishedUrl: publishedUrlFor(c.env, publishedPath) })),
+  });
 });
 
 siteRoutes.post("/sites", bodyLimit({ maxSize: 16 * 1024, onError: (c) => c.json({ error: "Body too large" }, 413) }), async (c) => {
@@ -138,7 +143,7 @@ siteRoutes.get("/sites/:id", async (c) => {
       .limit(1);
     if (version) document = JSON.parse(version.document);
   }
-  return c.json({ site, document });
+  return c.json({ site: { ...site, publishedUrl: publishedUrlFor(c.env, site.publishedPath) }, document });
 });
 
 siteRoutes.put(

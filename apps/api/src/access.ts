@@ -22,3 +22,9 @@ export async function loadAuthorizedSite(
   if (user.role !== "admin" && row.ownerUserId !== user.id) return null;
   return row.site;
 }
+
+/** True when `key` is an R2 key inside this site's own prefix (`sites/<siteId>/...`). */
+export function isSiteAssetKey(siteId: string, key: string): boolean {
+  const prefix = `sites/${siteId}/`;
+  return key.startsWith(prefix) && key.length > prefix.length && !key.includes("..");
+}
