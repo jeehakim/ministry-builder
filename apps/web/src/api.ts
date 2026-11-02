@@ -5,11 +5,15 @@ import {
   AiThemeResponse,
   AiTranslateResponse,
   AiUsageResponse,
+  IntegrationsResponse,
   SiteDocument,
   type AiDraftRequest,
   type AiRewriteRequest,
   type AiThemeRequest,
   type AiTranslateRequest,
+  type SendTestEmailRequest,
+  type SetResendFromRequest,
+  type SetResendKeyRequest,
 } from "@ministry/schema";
 import { API_URL } from "./env";
 import { MESSAGES_LIMIT, parseMessagesResponse, type ContactMessage } from "./lib/messages";
@@ -25,6 +29,8 @@ export interface SiteSummary {
 
 export interface SiteInfo {
   id: string;
+  /** The organization (Clerk org or user) that owns the site; integrations are scoped to it. Null in local mode. */
+  orgId: string | null;
   slug: string;
   publishedUrl: string | null;
   publishedAt: string | null;
@@ -122,6 +128,11 @@ export interface ApiClient {
   deleteSite(id: string): Promise<void>;
   listMessages(siteId: string): Promise<ContactMessage[]>;
   deleteMessage(siteId: string, id: string): Promise<void>;
+  getIntegrations(orgId: string): Promise<IntegrationsResponse>;
+  setResendKey(orgId: string, body: SetResendKeyRequest): Promise<IntegrationsResponse>;
+  setResendFrom(orgId: string, body: SetResendFromRequest): Promise<IntegrationsResponse>;
+  sendResendTest(orgId: string, body: SendTestEmailRequest): Promise<IntegrationsResponse>;
+  disconnectResend(orgId: string): Promise<void>;
   aiUsage(): Promise<AiUsageResponse>;
   aiDraft(siteId: string, body: AiDraftRequest): Promise<AiDraftResponse>;
   aiRewrite(siteId: string, body: AiRewriteRequest): Promise<AiRewriteResponse>;
@@ -151,6 +162,7 @@ interface Parser<T> {
 /** The site envelope as the server may send it: publish fields can be absent on older deployments. */
 interface RawSiteInfo {
   id: string;
+  orgId?: string | null;
   slug: string;
   publishedUrl?: string | null;
   publishedAt?: string | null;
@@ -158,7 +170,7 @@ interface RawSiteInfo {
 }
 
 function toSiteInfo(raw: RawSiteInfo): SiteInfo {
-  return { id: raw.id, slug: raw.slug, publishedUrl: raw.publishedUrl ?? null, publishedAt: raw.publishedAt ?? null, messageCount: raw.messageCount ?? 0 };
+  return { id: raw.id, orgId: raw.orgId ?? null, slug: raw.slug, publishedUrl: raw.publishedUrl ?? null, publishedAt: raw.publishedAt ?? null, messageCount: raw.messageCount ?? 0 };
 }
 
 function isPublishResult(v: unknown): v is PublishResult {
@@ -228,6 +240,15 @@ export function createApiClient(getToken: GetToken, baseUrl: string = API_URL): 
   });
 
   const sitePath = (id: string) => `/sites/${encodeURIComponent(id)}`;
+  const resendPath = (orgId: string) => `/orgs/${encodeURIComponent(orgId)}/integrations/resend`;
+
+  /** Request plus response validation; secrets never come back, and a drifting shape is a 502, not a crash. */
+  async function integrationsRequest(path: string, init: RequestInit): Promise<IntegrationsResponse> {
+    const data = await request<unknown>(path, init, JSON_TIMEOUT_MS);
+    const parsed = IntegrationsResponse.safeParse(data);
+    if (!parsed.success) throw new ApiError(502, "The server sent an unexpected response.");
+    return parsed.data;
+  }
 
   return {
     async listSites() {
@@ -286,6 +307,21 @@ export function createApiClient(getToken: GetToken, baseUrl: string = API_URL): 
     },
     async deleteMessage(siteId, id) {
       await request<unknown>(`${sitePath(siteId)}/messages/${encodeURIComponent(id)}`, json("DELETE"), JSON_TIMEOUT_MS);
+    },
+    getIntegrations(orgId) {
+      return integrationsRequest(`/orgs/${encodeURIComponent(orgId)}/integrations`, json("GET"));
+    },
+    setResendKey(orgId, body) {
+      return integrationsRequest(`${resendPath(orgId)}/key`, json("PUT", body));
+    },
+    setResendFrom(orgId, body) {
+      return integrationsRequest(`${resendPath(orgId)}/from`, json("PUT", body));
+    },
+    sendResendTest(orgId, body) {
+      return integrationsRequest(`${resendPath(orgId)}/test`, json("POST", body));
+    },
+    async disconnectResend(orgId) {
+      await request<unknown>(resendPath(orgId), json("DELETE"), JSON_TIMEOUT_MS);
     },
     aiUsage() {
       return aiRequest("/ai/usage", AiUsageResponse, json("GET"), JSON_TIMEOUT_MS);

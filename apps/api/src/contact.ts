@@ -2,6 +2,7 @@ import { SiteDocument, siteLanguages } from "@ministry/schema";
 import { and, count, eq, gte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { createSender } from "./email";
+import { resolveOrgSender, type OrgSenderResolution } from "./email/orgSender";
 import { contactNotification } from "./email/notification";
 import { formSubmissions, siteVersions, sites } from "./db/schema";
 import { newId } from "./ids";
@@ -121,7 +122,7 @@ export async function handleContactSubmission(
 
   const db = drizzle(env.DB);
   const [site] = await db
-    .select({ id: sites.id, currentVersionId: sites.currentVersionId })
+    .select({ id: sites.id, orgId: sites.orgId, currentVersionId: sites.currentVersionId })
     .from(sites)
     // Only live sites accept messages: a draft's address was never shown to anyone, so a post to it is abuse.
     .where(and(eq(sites.slug, slug), eq(sites.status, "published")))
@@ -190,16 +191,22 @@ export async function handleContactSubmission(
     userAgent: (request.headers.get("User-Agent") ?? "").slice(0, MAX_USER_AGENT),
   });
 
-  const sender = createSender(env);
-  if (sender) {
+  // The organization's own Resend account wins when it is set up. If it then fails, the message is not
+  // re-sent from the platform: their sender, their reputation, their error to fix.
+  const org = await resolveOrgSender(env, db, site.orgId);
+  const platform = createSender(env);
+  const choice: OrgSenderResolution = org ?? (platform ? { sender: platform } : null);
+  const deliveredVia = org ? "organization" : "platform";
+  if (choice) {
     try {
-      await withTimeout(sender.send(contactNotification({ orgName: doc.meta.orgName, name, email, message, language }, recipient)), SEND_TIMEOUT_MS);
-      await db.update(formSubmissions).set({ deliveredAt: new Date(), deliveryError: null }).where(eq(formSubmissions.id, id));
+      if ("error" in choice) throw new Error(choice.error);
+      await withTimeout(choice.sender.send(contactNotification({ orgName: doc.meta.orgName, name, email, message, language }, recipient)), SEND_TIMEOUT_MS);
+      await db.update(formSubmissions).set({ deliveredAt: new Date(), deliveryError: null, deliveredVia }).where(eq(formSubmissions.id, id));
     } catch (err) {
       const reason = (err instanceof Error ? err.message : String(err)).slice(0, MAX_DELIVERY_ERROR);
       // The visitor's message and address never go to the log; the provider's reason is scrubbed first.
-      logError("contact_email_failed", requestId, { site_id: site.id, message_id: id, ...errorFields(err) });
-      await db.update(formSubmissions).set({ deliveryError: reason }).where(eq(formSubmissions.id, id));
+      logError("contact_email_failed", requestId, { site_id: site.id, message_id: id, via: deliveredVia, ...errorFields(err) });
+      await db.update(formSubmissions).set({ deliveryError: reason, deliveredVia }).where(eq(formSubmissions.id, id));
     }
   }
 

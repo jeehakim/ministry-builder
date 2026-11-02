@@ -28,5 +28,10 @@ CLOUDFLARE_API_TOKEN=
 RESEND_API_KEY=
 # Sender of the notification emails (default in wrangler.jsonc: Ministry Sites <forms@shofar.io>).
 # EMAIL_FROM="Ministry Sites <forms@shofar.io>"
+# Encrypts organizations' own Resend API keys at rest (bring-your-own Resend). Base64 of 32 random bytes:
+#   openssl rand -base64 32
+# Leave empty to disable the /orgs/:id/integrations write routes (they answer 503). Production value lives on the
+# Worker as a secret; do not change it once organizations have stored keys, or those keys stop decrypting.
+INTEGRATIONS_KEY=
 # Salt for the hashed visitor IP used by the form rate limit (default "ministry").
 # FORM_SALT=

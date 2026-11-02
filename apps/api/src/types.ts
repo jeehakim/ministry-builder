@@ -52,6 +52,11 @@ export type Bindings = {
   EMAIL_FROM?: string;
   /** Secret. Resend API key, used when EMAIL_PROVIDER is "resend". */
   RESEND_API_KEY?: string;
+  /**
+   * Secret. Base64 of 32 random bytes (`openssl rand -base64 32`). Encrypts organization-supplied provider keys
+   * (bring-your-own Resend) at rest. When unset, the integration routes answer 503 and nothing is stored.
+   */
+  INTEGRATIONS_KEY?: string;
   /** Sites a non-admin user may own across all their organizations, as a string (var). Default 10. */
   MAX_SITES_PER_USER?: string;
   /** Total bytes of uploaded images per site (sum of assets.bytes), as a string (var). Default 100 MB. */

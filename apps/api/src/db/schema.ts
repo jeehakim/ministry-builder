@@ -141,6 +141,8 @@ export const formSubmissions = sqliteTable(
     deliveredAt: integer("delivered_at", { mode: "timestamp_ms" }),
     /** Why the notification email failed; null while undelivered-but-not-failed (store-only mode). */
     deliveryError: text("delivery_error"),
+    /** Which sender the notification went through (or was attempted through): the organization's own Resend account or the platform's. Null in store-only mode. */
+    deliveredVia: text("delivered_via", { enum: ["organization", "platform"] }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -197,7 +199,58 @@ export const publishEvents = sqliteTable(
   (t) => [index("publish_events_site_id_created_at_idx").on(t.siteId, t.createdAt)],
 );
 
+/**
+ * An organization's own email provider account (bring your own Resend). The API key is stored only as
+ * AES-256-GCM ciphertext bound to the organization id (see crypto.ts); `key_hint` is its last four characters.
+ * At most one row per organization.
+ */
+export const orgIntegrations = sqliteTable(
+  "org_integrations",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    provider: text("provider", { enum: ["resend"] })
+      .notNull()
+      .default("resend"),
+    /** `v1.<iv>.<ciphertext+tag>`. Never returned by any route. */
+    encryptedKey: text("encrypted_key").notNull(),
+    keyHint: text("key_hint").notNull(),
+    fromAddress: text("from_address"),
+    fromName: text("from_name"),
+    /** JSON array of domain names that were verified in the organization's Resend account when last fetched. */
+    verifiedDomainsJson: text("verified_domains_json").notNull().default("[]"),
+    testedAt: integer("tested_at", { mode: "timestamp_ms" }),
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [uniqueIndex("org_integrations_org_id_unique").on(t.orgId)],
+);
+
+/**
+ * One row per attempt to store a key or send a test email, so the hourly limits can be counted.
+ * Not tied to org_integrations: key attempts happen before a row exists, and a delete must not reset the limit.
+ * Rows older than a day are pruned on the next attempt for the same organization.
+ */
+export const integrationEvents = sqliteTable(
+  "integration_events",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    kind: text("kind", { enum: ["key_attempt", "test_email"] }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("integration_events_org_id_kind_created_at_idx").on(t.orgId, t.kind, t.createdAt)],
+);
+
 export type User = typeof users.$inferSelect;
 export type Site = typeof sites.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
 export type Domain = typeof domains.$inferSelect;
+export type OrgIntegration = typeof orgIntegrations.$inferSelect;

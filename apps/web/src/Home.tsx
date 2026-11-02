@@ -1,7 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate } from "react-router";
-import { ArrowRight, Globe, Loader2, MoreHorizontal, Plus, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { ArrowRight, Globe, Loader2, MoreHorizontal, Plus, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,6 +12,7 @@ import { LOCAL_SITE_ID } from "./backend";
 import { useBackend } from "./backend-context";
 import { ApiUnreachableBanner } from "./components/ApiUnreachableBanner";
 import { Brand } from "./components/Brand";
+import { DeleteSiteDialog } from "./components/DeleteSiteDialog";
 import { HelpMenu } from "./components/HelpMenu";
 import { isNetworkError } from "./lib/errors";
 import { ThemeToggle } from "./components/ThemeToggle";
@@ -44,24 +44,8 @@ export function Home() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<SiteSummary | null>(null);
-  const [deleting, setDeleting] = useState(false);
   // Bumped by the banner's retry button to load the list again.
   const [attempt, setAttempt] = useState(0);
-
-  async function handleDelete() {
-    if (!pendingDelete || !backend.deleteSite) return;
-    setDeleting(true);
-    try {
-      await backend.deleteSite(pendingDelete.id);
-      setState((current) => (current.kind === "ready" ? { kind: "ready", sites: current.sites.filter((x) => x.id !== pendingDelete.id) } : current));
-      toast.success(`Deleted ${pendingDelete.orgName}`, { description: "The site, its images, messages and published pages are gone." });
-      setPendingDelete(null);
-    } catch (err) {
-      toast.error("Could not delete the site", { description: err instanceof Error ? err.message : "Something went wrong." });
-    } finally {
-      setDeleting(false);
-    }
-  }
 
   useEffect(() => {
     let cancelled = false;
@@ -188,6 +172,14 @@ export function Home() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              {backend.integrations ? (
+                                <DropdownMenuItem asChild>
+                                  <Link to={`/sites/${encodeURIComponent(s.id)}/settings`}>
+                                    <Settings />
+                                    Settings
+                                  </Link>
+                                </DropdownMenuItem>
+                              ) : null}
                               <DropdownMenuItem variant="destructive" onSelect={() => setPendingDelete(s)}>
                                 <Trash2 />
                                 Delete site
@@ -250,26 +242,14 @@ export function Home() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={pendingDelete !== null} onOpenChange={(o) => !o && !deleting && setPendingDelete(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Delete {pendingDelete?.orgName}?</DialogTitle>
-            <DialogDescription>
-              This removes the site, every saved version, uploaded images, contact messages and the published pages
-              {pendingDelete?.publishedUrl ? ` at ${pendingDelete.publishedUrl}` : ""}. It cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button type="button" variant="outline" disabled={deleting} onClick={() => setPendingDelete(null)}>
-              Keep it
-            </Button>
-            <Button type="button" variant="destructive" disabled={deleting} onClick={() => void handleDelete()}>
-              {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
-              {deleting ? "Deleting…" : "Delete site"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DeleteSiteDialog
+        site={pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        onDeleted={(id) => {
+          setState((current) => (current.kind === "ready" ? { kind: "ready", sites: current.sites.filter((x) => x.id !== id) } : current));
+          setPendingDelete(null);
+        }}
+      />
     </div>
   );
 }

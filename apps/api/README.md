@@ -59,6 +59,11 @@ Set `vars.ALLOWED_ORIGIN` to `https://build.shofar.io` for production and uncomm
 | `DELETE /sites/:id/domains/:domainId` | owner or admin | Removes the custom hostname at Cloudflare, then the row |
 | `GET /sites/:id/messages?limit=50` | owner or admin | `{ messages: [{ id, name, email, message, language, createdAt, deliveredAt, deliveryError }] }`, newest first (limit 1-200) |
 | `DELETE /sites/:id/messages/:msgId` | owner or admin | Removes one stored message |
+| `GET /orgs/:id/integrations` | org owner or admin | `IntegrationsResponse`: `{ encryptionAvailable, activeSender: "organization" \| "platform" \| "none", resend: { keyHint, fromAddress, verifiedDomains, testedAt, lastError, updatedAt } \| null }`. Never contains the key or its ciphertext |
+| `PUT /orgs/:id/integrations/resend/key` | org owner or admin | `{ apiKey }`; checks the key against Resend (`GET /domains`), stores it encrypted and the verified domains. 400 malformed key or "Resend rejected this key", 429 past 10 attempts per hour, 502 Resend unreachable, 503 integrations disabled |
+| `PUT /orgs/:id/integrations/resend/from` | org owner or admin | `{ fromAddress, fromName? }`; the address's domain must be verified in the organization's Resend account (the list is refreshed first). 400 otherwise, 409 without a key |
+| `POST /orgs/:id/integrations/resend/test` | org owner or admin | `{ to }`; sends a short test email through the organization's key and address. Sets `testedAt`, or `lastError` and answers 502. 429 past 5 per hour, 409 without key or address |
+| `DELETE /orgs/:id/integrations/resend` | org owner or admin | Removes the stored key and settings; contact email goes back to the platform sender |
 | `GET /admin/sites` | admin | Every site with org name, owner, status and published URL |
 | `POST /orgs/:id/transfer` | admin | `{ email }`; looks the user up in Clerk and makes them the org owner |
 
@@ -73,7 +78,7 @@ Published sites post their contact form to this Worker: `POST /<slug>/contact` o
 - takes `name` (1-120), `email` (3-200), `message` (1-4000) and the hidden `_lang` (a language of the site, else the primary) as urlencoded or multipart data, and answers a small HTML page on `400`, `404` (unknown site or no contact email), `405` (anything but POST) and `413` (over 64 KB);
 - treats a filled honeypot field `website` as a bot: it redirects like a success and stores nothing;
 - allows 5 messages per visitor per 10 minutes and 30 per site per hour (`429`). The visitor is identified by a salted SHA-256 of `CF-Connecting-IP` (salt: the `FORM_SALT` var, default `ministry`); the raw address is never stored;
-- stores the message in `form_submissions` first, then emails it to the contact address with the visitor as `Reply-To`, subject `[<org>] New message from <name>`. A delivery failure is logged and kept in `delivery_error`; the visitor still gets the redirect;
+- stores the message in `form_submissions` first, then emails it to the contact address with the visitor as `Reply-To`, subject `[<org>] New message from <name>`. A delivery failure is logged and kept in `delivery_error`; the visitor still gets the redirect. `delivered_via` records which sender handled it (`organization` or `platform`; null in store-only mode), see "Organization email" below;
 - answers `303` to the thank-you page that publishing writes next to each language page: `/<slug>/thanks/` or `/<slug>/<lang>/thanks/` (subdomain form: `/thanks/`, `/<lang>/thanks/`). All of these responses are `Cache-Control: no-store`.
 
 Messages are personal data; deleting one is `DELETE /sites/:id/messages/:msgId`. They are kept until the owner deletes them (unpublishing does not remove them).
@@ -89,6 +94,26 @@ Messages are personal data; deleting one is `DELETE /sites/:id/messages/:msgId`.
 | `resend` | secret `RESEND_API_KEY` | Resend REST API (`POST https://api.resend.com/emails`). Verify the `EMAIL_FROM` domain in the Resend dashboard, then `npx wrangler secret put RESEND_API_KEY` |
 
 A provider that is selected but missing its binding or key falls back to store-only. Providers live in `src/email/` behind the `EmailSender` interface.
+
+#### Organization email (bring your own Resend)
+
+An organization can connect its own Resend account so contact-form email leaves from its own domain and reputation instead of the platform's. Routes are under `/orgs/:id/integrations` (table above); only the organization's owner or an admin can use them (anyone else gets 404), and every response is `Cache-Control: no-store`.
+
+Setup flow: `PUT .../resend/key` with the API key, then `PUT .../resend/from` with an address on a domain the organization verified in Resend, then `POST .../resend/test`.
+
+- **Key check.** The key must match `RESEND_KEY_PATTERN` and is verified by calling `GET https://api.resend.com/domains` with it; Resend answering 401 or 403 means `400 "Resend rejected this key"`. That call needs a full-access key, so a sending-only key is rejected too. Domains with status `verified` are stored (`verified_domains_json`) and offered back as `verifiedDomains`. Replacing the key keeps the from address only if its domain is still verified in the new account, and clears `testedAt`.
+- **Encryption at rest.** The key is stored as AES-256-GCM ciphertext (`src/crypto.ts`) in `org_integrations.encrypted_key`, formatted `v1.<iv>.<ciphertext+tag>` (base64url). The organization id is the GCM additional authenticated data, so a ciphertext copied to another organization's row will not decrypt. Only the last four characters (`key_hint`) are kept in the clear. The key is never returned, never logged (`src/log.ts` masks `re_...` tokens in error text), and decrypted only to call Resend.
+- **The server secret.** `INTEGRATIONS_KEY` is base64 of 32 random bytes. Generate and set it once:
+
+  ```bash
+  openssl rand -base64 32 | npx wrangler secret put INTEGRATIONS_KEY
+  ```
+
+  For `wrangler dev`, put the same kind of value in `.dev.vars`. Without it (or if it is not exactly 32 bytes) `GET` reports `encryptionAvailable: false` and the key, from and test routes answer `503 { "error": "Integrations are not enabled on this server" }`; nothing is stored. `DELETE` keeps working so an owner can always remove a stored key. **Do not change or lose `INTEGRATIONS_KEY` once organizations have stored keys**: their ciphertexts stop decrypting, their contact email fails with a delivery error until they enter the key again, and there is no re-encryption path yet.
+- **Delivery.** For each contact-form message the Worker looks up the site's organization. If it has a key and a from address, the message goes through Resend with that key and address (`src/email/orgSender.ts`, reusing `resendSender(apiKey, from)`) and `form_submissions.delivered_via` is `organization`. If that send fails, or the key cannot be decrypted, the error is kept in `delivery_error` and the message is **not** re-sent from the platform sender: their sender, their reputation. With no integration, or a key but no from address yet, the platform sender is used (`delivered_via` is `platform`), or nothing in store-only mode.
+- **Limits.** 10 key attempts and 5 test emails per organization per rolling hour, failures included, counted in `integration_events` (claimed atomically; rows older than a day are pruned). Deleting the integration does not reset them. Resend calls time out after 8 seconds.
+- **Cleanup.** The integration row and its counters are deleted with the organization (when its last site is deleted).
+- **Display names.** `fromName` may not contain quotes, angle brackets, backslashes or control characters; the From header is `"Name" <address>`.
 
 Errors are `{ "error": string }`. A site you may not access answers 404, same as a missing one.
 
@@ -139,6 +164,7 @@ Error lines are one JSON object with `event` and `request_id` (the `cf-ray` head
 | `OPENAI_API_KEY` | same, name `OPENAI_API_KEY` | AI copilot on OpenAI. Model comes from the `OPENAI_MODEL` var |
 | `ANTHROPIC_API_KEY` | same, name `ANTHROPIC_API_KEY` | AI copilot on Claude (key from console.anthropic.com; a Claude.ai subscription does not work). Model comes from the `ANTHROPIC_MODEL` var (default `claude-opus-5-5`; set `claude-sonnet-5-5` or `claude-haiku-5-5` to spend less) |
 | `RESEND_API_KEY` | same, name `RESEND_API_KEY` | Optional. Contact-form notification emails when `EMAIL_PROVIDER` is `resend` |
+| `INTEGRATIONS_KEY` | `openssl rand -base64 32 \| npx wrangler secret put INTEGRATIONS_KEY` | Optional. Encrypts organizations' own Resend API keys at rest (see "Organization email"). Without it the integration routes answer 503. Never rotate casually: stored keys stop decrypting |
 | `STAFF_API_TOKEN` | same, name `STAFF_API_TOKEN` | Optional. Requests with header `X-Staff-Token: <value>` act as the admin user `staff-bot` |
 | `CLOUDFLARE_API_TOKEN` | same, name `CLOUDFLARE_API_TOKEN` | Optional. Custom domains (see below). Without it, or without the `CLOUDFLARE_ZONE_ID` var, the domain routes answer 503 and the editor hides the add form |
 

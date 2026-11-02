@@ -11,6 +11,10 @@ import {
   type AiTranslateResponse,
   type AiUsageResponse,
   type ImageRef,
+  type IntegrationsResponse,
+  type SendTestEmailRequest,
+  type SetResendFromRequest,
+  type SetResendKeyRequest,
 } from "@ministry/schema";
 import {
   createApiClient,
@@ -54,6 +58,17 @@ export interface MessagesBackend {
   remove(siteId: string, id: string): Promise<void>;
 }
 
+/** Bring-your-own integrations (Resend), scoped to the site's organization. Only the API backend has them. */
+export interface IntegrationsBackend {
+  get(orgId: string): Promise<IntegrationsResponse>;
+  /** Stores the key (encrypted server-side) and returns the view with its hint and verified domains. */
+  setResendKey(orgId: string, request: SetResendKeyRequest): Promise<IntegrationsResponse>;
+  setResendFrom(orgId: string, request: SetResendFromRequest): Promise<IntegrationsResponse>;
+  sendResendTest(orgId: string, request: SendTestEmailRequest): Promise<IntegrationsResponse>;
+  /** Removes the stored key; delivery returns to the platform default. */
+  disconnectResend(orgId: string): Promise<void>;
+}
+
 /**
  * What the editor needs from storage. The hosted implementation talks to the
  * API; the local one uses localStorage. Editor code only sees this interface.
@@ -72,6 +87,8 @@ export interface Backend {
   ai?: AiBackend;
   /** Present in API mode only; local mode has no hosted form, so no inbox. */
   messages?: MessagesBackend;
+  /** Present in API mode only; local mode has no hosted form, so nothing to deliver. */
+  integrations?: IntegrationsBackend;
   /** Publishes the saved document on Ministry Sites. API mode only. */
   publish?(siteId: string): Promise<PublishResult>;
   unpublish?(siteId: string): Promise<void>;
@@ -121,6 +138,13 @@ export function createApiBackend(getToken: GetToken): Backend {
       remove: (siteId, domainId) => api.removeDomain(siteId, domainId),
     },
     deleteSite: (siteId) => api.deleteSite(siteId),
+    integrations: {
+      get: (orgId) => api.getIntegrations(orgId),
+      setResendKey: (orgId, request) => api.setResendKey(orgId, request),
+      setResendFrom: (orgId, request) => api.setResendFrom(orgId, request),
+      sendResendTest: (orgId, request) => api.sendResendTest(orgId, request),
+      disconnectResend: (orgId) => api.disconnectResend(orgId),
+    },
   };
 }
 
@@ -176,7 +200,7 @@ export function createLocalBackend(): Backend {
   }
 
   function loaded(document: SiteDocument): LoadedSite {
-    return { site: { id: LOCAL_SITE_ID, slug: slugify(document.meta.orgName), publishedUrl: null, publishedAt: null, messageCount: 0 }, document };
+    return { site: { id: LOCAL_SITE_ID, orgId: null, slug: slugify(document.meta.orgName), publishedUrl: null, publishedAt: null, messageCount: 0 }, document };
   }
 
   return {

@@ -17,6 +17,8 @@ export default defineConfig(async () => {
             // Custom domains: the Cloudflare API is stubbed in test/domains.test.ts.
             CLOUDFLARE_API_TOKEN: "test-cf-token",
             CLOUDFLARE_ZONE_ID: "zone-test",
+            // Integrations: base64 of 32 bytes (test only). Resend is stubbed in test/integrations.test.ts.
+            INTEGRATIONS_KEY: Buffer.alloc(32, 7).toString("base64"),
           },
         },
       }),

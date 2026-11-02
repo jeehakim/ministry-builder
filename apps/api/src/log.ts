@@ -8,6 +8,8 @@ const REDACTIONS: [RegExp, string][] = [
   [/eyJ[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){1,2}/g, "[token]"],
   [/Bearer\s+\S+/gi, "Bearer [redacted]"],
   [/\b(?:sk|pk|rk|re|whsec)[-_][A-Za-z0-9_-]{16,}/g, "[key]"],
+  // Resend keys are re_<id>_<secret>; the shorter shape is still a key, so mask anything re_-prefixed from 8 characters.
+  [/\bre_[A-Za-z0-9_]{8,}/g, "[key]"],
   [/[^\s@<>()",;:]+@[^\s@<>()",;]+/g, "[email]"],
 ];
 
