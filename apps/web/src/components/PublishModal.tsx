@@ -6,6 +6,7 @@ import type { SiteInfo } from "../api";
 import { useBackend } from "../backend-context";
 import { useSiteId } from "../editor/EditorContext";
 import { languageUrls } from "../lib/languages";
+import { platformContactEmail } from "../lib/messages";
 import { formatRelativeTime } from "../lib/time";
 import { safeHttpUrl } from "../lib/urls";
 import { Button } from "@/components/ui/button";
@@ -98,6 +99,7 @@ function HostedPublish(props: {
 
   const liveUrl = safeHttpUrl(site.publishedUrl);
   const published = liveUrl !== null;
+  const contactEmail = platformContactEmail(doc);
 
   async function publish() {
     if (!backend.publish) return;
@@ -167,6 +169,16 @@ function HostedPublish(props: {
             </Button>
           </div>
           <LanguageAddresses liveUrl={liveUrl} doc={doc} />
+          {contactEmail ? (
+            <div className="space-y-0.5 border-t pt-2">
+              <p className="text-sm">
+                <span className="font-medium">Contact form:</span> messages go to <span className="break-all">{contactEmail}</span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Email delivery is enabled by the platform operator. Every message also appears under Messages in the editor.
+              </p>
+            </div>
+          ) : null}
         </div>
       ) : null}
 

@@ -16,8 +16,10 @@
   "vars": {
     // Origin of the web app allowed by CORS. Override per environment.
     "ALLOWED_ORIGIN": "https://build.shofar.io",
-    // Chat model used by the AI copilot. Overridable per environment.
+    // Chat model used by the AI copilot on OpenAI. Overridable per environment.
     "OPENAI_MODEL": "gpt-5-mini",
+    // Claude model used by the AI copilot on Anthropic (AI_PROVIDER=anthropic or only ANTHROPIC_API_KEY set).
+    "ANTHROPIC_MODEL": "claude-opus-5-5",
     // AI calls allowed per user per UTC day.
     "AI_DAILY_LIMIT": "30",
     // Hostname that serves published sites (path form: sites.shofar.io/<slug>/).
@@ -28,8 +30,16 @@
     "CUSTOM_HOSTNAME_CNAME_TARGET": "sites.shofar.io",
     // Zone id of shofar.io (dashboard: zone Overview > API). With CLOUDFLARE_API_TOKEN (a secret)
     // it enables customer domains through Cloudflare for SaaS custom hostnames.
-    "CLOUDFLARE_ZONE_ID": ""
+    "CLOUDFLARE_ZONE_ID": "",
+    // Contact-form notification emails: "cloudflare" (send_email binding below), "resend" (RESEND_API_KEY secret)
+    // or "none" (store messages only; owners read them through GET /sites/:id/messages).
+    "EMAIL_PROVIDER": "none",
+    "EMAIL_FROM": "Ministry Sites <forms@shofar.io>"
   },
+
+  // Cloudflare Email Sending (needs a plan that includes it, and the sender domain onboarded under Email Sending).
+  // To use it: uncomment, set EMAIL_PROVIDER to "cloudflare", redeploy.
+  // "send_email": [{ "name": "EMAIL" }],
 
   "d1_databases": [
     {

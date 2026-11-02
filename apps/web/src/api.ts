@@ -12,6 +12,7 @@ import {
   type AiTranslateRequest,
 } from "@ministry/schema";
 import { API_URL } from "./env";
+import { MESSAGES_LIMIT, parseMessagesResponse, type ContactMessage } from "./lib/messages";
 
 export interface SiteSummary {
   id: string;
@@ -27,6 +28,8 @@ export interface SiteInfo {
   slug: string;
   publishedUrl: string | null;
   publishedAt: string | null;
+  /** Contact form messages stored for the site. */
+  messageCount: number;
 }
 
 export interface LoadedSite {
@@ -115,6 +118,8 @@ export interface ApiClient {
   addDomain(siteId: string, hostname: string, kind: DomainKind): Promise<SiteDomain>;
   refreshDomain(siteId: string, domainId: string): Promise<SiteDomain>;
   removeDomain(siteId: string, domainId: string): Promise<void>;
+  listMessages(siteId: string): Promise<ContactMessage[]>;
+  deleteMessage(siteId: string, id: string): Promise<void>;
   aiUsage(): Promise<AiUsageResponse>;
   aiDraft(siteId: string, body: AiDraftRequest): Promise<AiDraftResponse>;
   aiRewrite(siteId: string, body: AiRewriteRequest): Promise<AiRewriteResponse>;
@@ -147,10 +152,11 @@ interface RawSiteInfo {
   slug: string;
   publishedUrl?: string | null;
   publishedAt?: string | null;
+  messageCount?: number;
 }
 
 function toSiteInfo(raw: RawSiteInfo): SiteInfo {
-  return { id: raw.id, slug: raw.slug, publishedUrl: raw.publishedUrl ?? null, publishedAt: raw.publishedAt ?? null };
+  return { id: raw.id, slug: raw.slug, publishedUrl: raw.publishedUrl ?? null, publishedAt: raw.publishedAt ?? null, messageCount: raw.messageCount ?? 0 };
 }
 
 function isPublishResult(v: unknown): v is PublishResult {
@@ -266,6 +272,15 @@ export function createApiClient(getToken: GetToken, baseUrl: string = API_URL): 
     },
     async removeDomain(siteId, domainId) {
       await request<unknown>(`${sitePath(siteId)}/domains/${encodeURIComponent(domainId)}`, json("DELETE"), JSON_TIMEOUT_MS);
+    },
+    async listMessages(siteId) {
+      const data = await request<unknown>(`${sitePath(siteId)}/messages?limit=${MESSAGES_LIMIT}`, json("GET"), JSON_TIMEOUT_MS);
+      const messages = parseMessagesResponse(data);
+      if (!messages) throw new ApiError(502, "The server sent an unexpected messages response.");
+      return messages;
+    },
+    async deleteMessage(siteId, id) {
+      await request<unknown>(`${sitePath(siteId)}/messages/${encodeURIComponent(id)}`, json("DELETE"), JSON_TIMEOUT_MS);
     },
     aiUsage() {
       return aiRequest("/ai/usage", AiUsageResponse, json("GET"), JSON_TIMEOUT_MS);

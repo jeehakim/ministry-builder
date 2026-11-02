@@ -75,6 +75,7 @@ function FieldView({
           value={str(current)}
           multiline={field.multiline}
           placeholder={field.placeholder}
+          hint={field.hint}
           assist={sectionType ? { context: `${sectionType} ${field.label}` } : undefined}
           disabled={translating && field.fixed === true}
           onChange={(text) => onChange(withKey(value, field.key, field.optional && text === "" ? undefined : text))}

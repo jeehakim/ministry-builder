@@ -241,7 +241,7 @@ describe("multi-language publish", () => {
 
     expect(await env.PUBLISHED.head(`published/${site.id}/en/index.html`)).toBeNull();
     const keys = (await env.PUBLISHED.list({ prefix: `published/${site.id}/` })).objects.map((o) => o.key);
-    expect(keys.filter((k) => k.endsWith("index.html"))).toEqual([`published/${site.id}/index.html`]);
+    expect(keys.filter((k) => k.endsWith("index.html"))).toEqual([`published/${site.id}/index.html`, `published/${site.id}/thanks/index.html`]);
     expect(keys.some((k) => k.includes(".."))).toBe(false);
     expect(await env.PUBLISHED.head(`published/${site.id}/not a page.txt`)).not.toBeNull();
     expect(await pageText(site.id, "index.html")).not.toContain("hreflang");

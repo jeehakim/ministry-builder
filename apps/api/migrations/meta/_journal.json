@@ -19,8 +19,22 @@
     {
       "idx": 2,
       "version": "6",
-      "when": 1793652248568,
-      "tag": "0002_blue_darkhawk",
+      "when": 1793654021620,
+      "tag": "0002_magenta_naoko",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793654303682,
+      "tag": "0003_misty_professor_monster",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1793654547863,
+      "tag": "0004_tranquil_lady_vermin",
       "breakpoints": true
     }
   ]

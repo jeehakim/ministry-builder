@@ -1,5 +1,6 @@
 import type { Section, SiteDocument } from "@ministry/schema";
 import type { RenderOptions } from "../types";
+import { ContactForm } from "../ContactForm";
 import { paragraphs } from "../util";
 import { LanguageSwitcher } from "../LanguageSwitcher";
 
@@ -186,14 +187,7 @@ function SectionView({
                 </div>
               ) : null}
             </div>
-            {s.formEndpoint ? (
-              <form className="form" action={s.formEndpoint} method="POST">
-                <input name="name" placeholder="Your name" required />
-                <input name="email" type="email" placeholder="Your email" required />
-                <textarea name="message" rows={5} placeholder="Message" required />
-                <button type="submit">Send</button>
-              </form>
-            ) : null}
+            <ContactForm section={s} options={options} />
           </div>
         </section>
       );

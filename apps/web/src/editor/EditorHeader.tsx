@@ -1,6 +1,7 @@
 import { Link } from "react-router";
-import { ArrowLeft, Download, Layers, Loader2, Rocket, Sparkles } from "lucide-react";
+import { ArrowLeft, Download, Inbox, Layers, Loader2, Rocket, Sparkles } from "lucide-react";
 import type { SiteInfo } from "../api";
+import { useBackend } from "../backend-context";
 import { AiUsagePill } from "../components/AiUsagePill";
 import { Brand } from "../components/Brand";
 import { PublishedBadge } from "../components/PublishedBadge";
@@ -25,8 +26,10 @@ export function EditorHeader(props: {
   onVariations: () => void;
   onExport: () => void;
   onPublish: () => void;
+  onMessages: () => void;
 }) {
-  const { orgName, save, site, exporting, hasVariations, onDraft, onVariations, onExport, onPublish } = props;
+  const { orgName, save, site, exporting, hasVariations, onDraft, onVariations, onExport, onPublish, onMessages } = props;
+  const backend = useBackend();
   const { enabled, disabledReason, busy } = useAi();
   const drafting = busy[DRAFT_BUSY_KEY] === true;
   // aria-disabled (not disabled) so keyboard users can still focus the button and hear why it is off.
@@ -79,6 +82,17 @@ export function EditorHeader(props: {
       <SaveIndicator state={save} />
       <PublishedBadge url={site.publishedUrl} />
       <Separator orientation="vertical" className="h-5!" />
+      {backend.messages ? (
+        <Button variant="outline" size="sm" onClick={onMessages} aria-label={site.messageCount > 0 ? `Messages, ${site.messageCount} received` : "Messages"}>
+          <Inbox />
+          Messages
+          {site.messageCount > 0 ? (
+            <span className="ml-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground tabular-nums" aria-hidden="true">
+              {site.messageCount > 99 ? "99+" : site.messageCount}
+            </span>
+          ) : null}
+        </Button>
+      ) : null}
       <Button variant="outline" size="sm" disabled={exporting} onClick={onExport}>
         {exporting ? <Loader2 className="animate-spin" /> : <Download />}
         Export

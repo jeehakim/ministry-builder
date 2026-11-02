@@ -7,6 +7,7 @@ import { adminRoutes } from "../src/routes/admin";
 import { aiRoutes } from "../src/routes/ai";
 import { assetRoutes } from "../src/routes/assets";
 import { domainRoutes } from "../src/routes/domains";
+import { messageRoutes } from "../src/routes/messages";
 import { publishRoutes } from "../src/routes/publish";
 import { siteRoutes } from "../src/routes/sites";
 import type { AppEnv } from "../src/types";
@@ -35,6 +36,7 @@ app.route("/", assetRoutes);
 app.route("/", aiRoutes);
 app.route("/", publishRoutes);
 app.route("/", domainRoutes);
+app.route("/", messageRoutes);
 app.route("/", adminRoutes);
 
 export function call(

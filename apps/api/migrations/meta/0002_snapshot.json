@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "7a0e5bba-9813-4d1b-a270-d836fed748b8",
+  "id": "732a6d4a-014a-460d-ba11-5e65fe000021",
   "prevId": "76e1d2dd-7f19-4fc9-9128-ababfc358af0",
   "tables": {
     "ai_usage": {
@@ -220,8 +220,8 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "domains": {
-      "name": "domains",
+    "form_submissions": {
+      "name": "form_submissions",
       "columns": {
         "id": {
           "name": "id",
@@ -237,38 +237,59 @@
           "notNull": true,
           "autoincrement": false
         },
-        "hostname": {
-          "name": "hostname",
+        "name": {
+          "name": "name",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "kind": {
-          "name": "kind",
+        "email": {
+          "name": "email",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "cf_custom_hostname_id": {
-          "name": "cf_custom_hostname_id",
+        "message": {
+          "name": "message",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
-        "ssl_status": {
-          "name": "ssl_status",
+        "language": {
+          "name": "language",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "ip_hash": {
+          "name": "ip_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_agent": {
+          "name": "user_agent",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'pending'"
+          "default": "''"
         },
-        "verified_at": {
-          "name": "verified_at",
+        "delivered_at": {
+          "name": "delivered_at",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "delivery_error": {
+          "name": "delivery_error",
+          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -280,36 +301,30 @@
           "notNull": true,
           "autoincrement": false,
           "default": "(unixepoch() * 1000)"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(unixepoch() * 1000)"
         }
       },
       "indexes": {
-        "domains_hostname_unique": {
-          "name": "domains_hostname_unique",
+        "form_submissions_site_id_created_at_idx": {
+          "name": "form_submissions_site_id_created_at_idx",
           "columns": [
-            "hostname"
+            "site_id",
+            "created_at"
           ],
-          "isUnique": true
+          "isUnique": false
         },
-        "domains_site_id_idx": {
-          "name": "domains_site_id_idx",
+        "form_submissions_ip_hash_created_at_idx": {
+          "name": "form_submissions_ip_hash_created_at_idx",
           "columns": [
-            "site_id"
+            "ip_hash",
+            "created_at"
           ],
           "isUnique": false
         }
       },
       "foreignKeys": {
-        "domains_site_id_sites_id_fk": {
-          "name": "domains_site_id_sites_id_fk",
-          "tableFrom": "domains",
+        "form_submissions_site_id_sites_id_fk": {
+          "name": "form_submissions_site_id_sites_id_fk",
+          "tableFrom": "form_submissions",
           "tableTo": "sites",
           "columnsFrom": [
             "site_id"

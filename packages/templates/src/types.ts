@@ -6,6 +6,13 @@ export interface RenderOptions {
   imageUrl: (ref: ImageRef) => string;
   /** When true, sections get data-section-id attributes for editor scroll-to. */
   editor?: boolean;
+  /**
+   * Where the contact form posts (the platform endpoint that emails the section's address).
+   * Omitted = the form renders only when the user set a custom `formEndpoint`; "#" = disabled preview form.
+   */
+  formAction?: string;
+  /** Set by renderSite from the document; templates read it for fixed UI strings. */
+  language?: string;
   /** Language switcher entries (current one marked). Omitted or empty = no switcher. */
   languageLinks?: LanguageLink[];
 }

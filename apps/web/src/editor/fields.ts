@@ -5,7 +5,7 @@ export type Obj = Record<string, unknown>;
 /** Describes the form for a section type; the form component renders it generically. */
 export type FieldSpec =
   /** `fixed` text is the same in every language (URLs, email, phone), so translations cannot edit it. */
-  | { kind: "text"; key: string; label: string; multiline?: boolean; optional?: boolean; placeholder?: string; fixed?: boolean }
+  | { kind: "text"; key: string; label: string; multiline?: boolean; optional?: boolean; placeholder?: string; hint?: string; fixed?: boolean }
   | { kind: "image"; key: string; label: string }
   /** An optional single link; `blank` is what "Add" creates. */
   | { kind: "link"; key: string; label: string; blank: { label: string; href: string } }
@@ -123,13 +123,14 @@ export const SECTION_FIELDS: Record<SectionType, FieldSpec[]> = {
   ],
   contact: [
     heading,
-    { kind: "text", key: "email", label: "Email", fixed: true },
+    { kind: "text", key: "email", label: "Email", fixed: true, hint: "Messages from the contact form are emailed here" },
     { kind: "text", key: "phone", label: "Phone", fixed: true },
     { kind: "text", key: "address", label: "Address", multiline: true },
     {
       kind: "text",
       key: "formEndpoint",
-      label: "Contact form endpoint (optional)",
+      label: "Custom form endpoint (advanced, optional)",
+      hint: "Leave empty to use the built-in form that emails the address above",
       optional: true,
       fixed: true,
       placeholder: "https://api.web3forms.com/submit",

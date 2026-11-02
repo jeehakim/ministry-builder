@@ -1,5 +1,6 @@
 import type { Theme } from "@ministry/schema";
 import { themeVars } from "../util";
+import { CONTACT_FORM_CSS } from "../ContactForm";
 
 export function classicCss(theme: Theme): string {
   return `${themeVars(theme)}
@@ -58,10 +59,8 @@ blockquote footer{margin-top:8px;font-style:normal;opacity:.75}
 .contact-list{list-style:none;padding:0;margin:0}
 .contact-list li{margin-bottom:8px}
 .social{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}
-.form{display:grid;gap:12px}
-.form input,.form textarea{width:100%;padding:10px 12px;border:1px solid rgba(0,0,0,.2);border-radius:var(--radius);font:inherit}
-.form button{padding:12px 20px;border:0;border-radius:var(--radius);background:var(--accent);font-weight:600;cursor:pointer}
 .site-footer{padding:32px 0;font-size:.9rem;opacity:.7;text-align:center}
 .hidden{display:none}
-`;
+
+${CONTACT_FORM_CSS}`;
 }

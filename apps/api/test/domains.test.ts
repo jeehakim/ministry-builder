@@ -344,6 +344,54 @@ describe("hosting on a custom domain", () => {
     expect((await hosted("https://multilingual.org/en/index.html")).status).toBe(404);
   });
 
+  it("takes contact-form posts at /contact and serves the thank-you pages on the custom domain", async () => {
+    const site = await makeSite("dom_n", "Contact Domain");
+    const doc = emptySiteDocument("Contact Domain");
+    const contact = doc.sections.find((s) => s.type === "contact");
+    if (contact?.type === "contact") contact.email = "owner@example.org";
+    expect((await call("dom_n", `/sites/${site.id}/document`, jsonInit("PUT", doc))).status).toBe(200);
+    expect((await call("dom_n", `/sites/${site.id}/ai/translate`, jsonInit("POST", { language: "es" }))).status).toBe(200);
+    expect((await call("dom_n", `/sites/${site.id}/publish`, { method: "POST" })).status).toBe(200);
+    await addDomain("dom_n", site.id, "contact-domain.org");
+    await addDomain("dom_n", site.id, "contact-domain.net", "redirect");
+
+    // The published form posts to /contact relative to the page it is on.
+    const page = await (await hosted("https://contact-domain.org/")).text();
+    expect(page).toMatch(/action="contact"/);
+    expect(await (await hosted("https://contact-domain.org/es/")).text()).toMatch(/action="\.\.\/contact"/);
+
+    const post = (fields: Record<string, string>, ip: string) =>
+      hosted("https://contact-domain.org/contact", {
+        method: "POST",
+        redirect: "manual",
+        headers: { "CF-Connecting-IP": ip, "User-Agent": "domain-test" },
+        body: new URLSearchParams(fields),
+      });
+    const primary = await post({ name: "Ada", email: "ada@example.com", message: "Hello" }, "198.51.100.1");
+    expect(primary.status).toBe(303);
+    expect(primary.headers.get("location")).toBe("/thanks/");
+    const spanish = await post({ name: "Ada", email: "ada@example.com", message: "Hola", _lang: "es" }, "198.51.100.2");
+    expect(spanish.status).toBe(303);
+    expect(spanish.headers.get("location")).toBe("/es/thanks/");
+
+    const thanks = await hosted("https://contact-domain.org/thanks/");
+    expect(thanks.status).toBe(200);
+    expect(thanks.headers.get("cache-control")).toBe("no-store");
+    expect(thanks.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    const spanishThanks = await hosted("https://contact-domain.org/es/thanks/");
+    expect(spanishThanks.status).toBe(200);
+    expect(spanishThanks.headers.get("content-language")).toBe("es");
+    const slashless = await hosted("https://contact-domain.org/es/thanks", { redirect: "manual" });
+    expect(slashless.status).toBe(301);
+    expect(slashless.headers.get("location")).toBe("/es/thanks/");
+
+    // Other writes are still refused, and a redirect domain sends the form to the main domain.
+    expect((await hosted("https://contact-domain.org/", { method: "POST" })).status).toBe(405);
+    const viaRedirect = await hosted("https://contact-domain.net/contact", { method: "POST", redirect: "manual" });
+    expect(viaRedirect.status).toBe(301);
+    expect(viaRedirect.headers.get("location")).toBe("https://contact-domain.org/contact");
+  });
+
   it("lets unknown hosts and the API host fall through to the API", async () => {
     expect((await hosted("https://api.build.shofar.io/health")).status).toBe(200);
     expect((await hosted("https://nobody.example/health")).status).toBe(200);

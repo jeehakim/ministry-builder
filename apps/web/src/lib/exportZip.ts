@@ -1,14 +1,19 @@
-import { collectImages, renderSite } from "@ministry/templates";
+import { collectImages, renderSite, renderThanksPage } from "@ministry/templates";
 import type { ImageRef, SiteDocument } from "@ministry/schema";
 import type { Backend } from "../backend";
 import { slugify, uniqueFileName } from "./files";
+import { formActionUrl } from "./messages";
 
 /**
  * Builds the export ZIP: index.html plus images/<file> for every image ref.
  * Images are fetched through `backend.imageUrl`, so hosted URLs and local data
  * URLs go through the same path.
+ *
+ * In API mode the contact form posts to the platform endpoint for `siteSlug`, so a
+ * self-hosted copy still delivers messages, and a thanks/ page is included. In local
+ * mode there is no platform: the form renders only if the user set a custom endpoint.
  */
-export async function buildExportZip(doc: SiteDocument, backend: Backend): Promise<Blob> {
+export async function buildExportZip(doc: SiteDocument, backend: Backend, siteSlug: string): Promise<Blob> {
   const refs = collectImages(doc);
   const used = new Set<string>();
   const nameBySrc = new Map<string, string>();
@@ -36,11 +41,13 @@ export async function buildExportZip(doc: SiteDocument, backend: Backend): Promi
     const name = nameBySrc.get(ref.src);
     return name ? `images/${name}` : ref.src;
   };
-  const { html } = renderSite(doc, { imageUrl, editor: false });
+  const formAction = backend.mode === "api" ? formActionUrl(siteSlug) : undefined;
+  const { html } = renderSite(doc, { imageUrl, editor: false, formAction });
 
   const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   zip.file("index.html", html);
+  if (formAction) zip.file("thanks/index.html", renderThanksPage(doc, { backHref: "../" }));
   for (const f of files) zip.file(`images/${f.name}`, f.blob);
   return zip.generateAsync({ type: "blob", compression: "DEFLATE" });
 }
