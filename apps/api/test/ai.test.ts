@@ -3,8 +3,10 @@ import { templates } from "@ministry/templates";
 import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { aiUsage, siteVersions } from "../src/db/schema";
+import { FAKE_FAILING_INSTRUCTION } from "../src/ai/fake";
+import { PENDING_TTL_MS } from "../src/ai/usage";
 import { call, jsonInit, makeSite, uploadPng } from "./helpers";
 
 const NOTES = "Grace Church is a Korean-American congregation in Dallas. We meet Sundays at 10:30 AM.";
@@ -137,6 +139,58 @@ describe("quota and availability", () => {
     );
     expect((await usage("ai_quota_c")).used).toBe(0);
     expect((await call("ai_quota_c", `/sites/${site.id}/ai/rewrite`, jsonInit("POST", { text: "Hello", instruction: "Warmer" }))).status).toBe(200);
+  });
+
+  it("holds the limit when requests arrive at the same time", async () => {
+    const site = await makeSite("ai_quota_d", "Concurrent Org");
+    const rewrite = () =>
+      call("ai_quota_d", `/sites/${site.id}/ai/rewrite`, jsonInit("POST", { text: "Hello", instruction: "Warmer" }));
+    const statuses = (await Promise.all(Array.from({ length: 10 }, rewrite))).map((r) => r.status).sort();
+    expect(statuses).toEqual([200, 200, 200, 200, 429, 429, 429, 429, 429, 429]);
+    expect((await usage("ai_quota_d")).used).toBe(4);
+    const rows = await db().select().from(aiUsage).where(eq(aiUsage.userId, "ai_quota_d"));
+    expect(rows).toHaveLength(4);
+    expect(rows.every((r) => r.status === "done" && r.provider === "fake" && r.inputTokens > 0)).toBe(true);
+  });
+
+  it("gives the slot back when the provider fails, and ignores reservations left behind by a dead worker", async () => {
+    const site = await makeSite("ai_quota_e", "Failure Org");
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const failed = await call("ai_quota_e", `/sites/${site.id}/ai/rewrite`, jsonInit("POST", { text: "Hello", instruction: FAKE_FAILING_INSTRUCTION }));
+      expect(failed.status).toBe(502);
+    } finally {
+      errorLog.mockRestore();
+    }
+    expect((await usage("ai_quota_e")).used).toBe(0);
+    expect(await db().select().from(aiUsage).where(eq(aiUsage.userId, "ai_quota_e"))).toHaveLength(0);
+
+    // A pending row older than PENDING_TTL_MS stops counting; a fresh one still does.
+    const stale = { userId: "ai_quota_e", siteId: site.id, action: "rewrite" as const, provider: "pending", model: "pending", status: "pending" as const };
+    await db().insert(aiUsage).values([
+      { ...stale, id: "aiu_stale_1", createdAt: new Date(Date.now() - PENDING_TTL_MS - 1000) },
+      { ...stale, id: "aiu_fresh_1", createdAt: new Date() },
+    ]);
+    expect((await usage("ai_quota_e")).used).toBe(1);
+  });
+
+  it("answers 429 for everyone once the global daily cap is reached", async () => {
+    const site = await makeSite("ai_quota_f", "Global Org");
+    const capped = { ...env, AI_GLOBAL_DAILY_LIMIT: "1" };
+    const rewrite = (user: string, target: string) =>
+      call(user, `/sites/${target}/ai/rewrite`, jsonInit("POST", { text: "Hello", instruction: "Warmer" }), capped);
+    // Other tests have already used today's global quota, so the first call may be refused too: only the shape matters.
+    const first = await rewrite("ai_quota_f", site.id);
+    expect([200, 429]).toContain(first.status);
+    const other = await makeSite("ai_quota_g", "Global Other Org");
+    const blocked = await rewrite("ai_quota_g", other.id);
+    expect(blocked.status).toBe(429);
+    const body = (await blocked.json()) as { error: string; used: number; limit: number };
+    expect(body.limit).toBe(1);
+    expect(body.used).toBeGreaterThanOrEqual(1);
+    expect(body.error).toContain("everyone");
+    // The user's own count is untouched: the global cap refused the call before any slot was taken.
+    expect((await usage("ai_quota_g")).used).toBe(0);
   });
 
   it("answers 503 when no provider is configured", async () => {

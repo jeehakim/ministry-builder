@@ -97,7 +97,11 @@ export const assets = sqliteTable(
   (t) => [index("assets_site_id_idx").on(t.siteId), uniqueIndex("assets_r2_key_unique").on(t.r2Key)],
 );
 
-/** One row per AI call, written after the provider answers. The daily quota counts these rows. */
+/**
+ * One row per AI call. The row is inserted as `pending` before the provider is called (it reserves a slot
+ * of the per-user and global daily quotas atomically), then updated to `done` with the real token counts.
+ * A call the provider refused is deleted again. The quota counts `done` rows plus recent `pending` ones.
+ */
 export const aiUsage = sqliteTable(
   "ai_usage",
   {
@@ -109,6 +113,10 @@ export const aiUsage = sqliteTable(
     action: text("action", { enum: AI_ACTIONS }).notNull(),
     provider: text("provider").notNull(),
     model: text("model").notNull(),
+    /** `pending` while the provider call is in flight, `done` once it answered. */
+    status: text("status", { enum: ["pending", "done"] })
+      .notNull()
+      .default("done"),
     inputTokens: integer("input_tokens").notNull().default(0),
     outputTokens: integer("output_tokens").notNull().default(0),
     /** User-supplied inputs (notes, instruction, language…) as JSON, truncated. Never the system prompt or secrets. */
@@ -171,6 +179,10 @@ export const domains = sqliteTable(
     sslStatus: text("ssl_status").notNull().default("pending"),
     /** Set once Cloudflare reports the hostname as active (the customer's CNAME points at us). */
     verifiedAt: integer("verified_at", { mode: "timestamp_ms" }),
+    /** Random token the customer publishes as a TXT record at `_ministry-verify.<hostname>` to prove ownership. */
+    verificationToken: text("verification_token").notNull().default(""),
+    /** Set once the TXT record carrying `verification_token` was seen; rows still null after 7 days are deleted. */
+    ownershipVerifiedAt: integer("ownership_verified_at", { mode: "timestamp_ms" }),
     createdAt: createdAt(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" })
       .notNull()
@@ -197,6 +209,37 @@ export const publishEvents = sqliteTable(
     createdAt: createdAt(),
   },
   (t) => [index("publish_events_site_id_created_at_idx").on(t.siteId, t.createdAt)],
+);
+
+/**
+ * Double opt-in for the address a site's contact form delivers to. A row is created when the owner asks
+ * for a verification email; `verified_at` is set when the link in it is opened. Notifications are only
+ * emailed to an address with a verified row for that site.
+ */
+export const contactEmailVerifications = sqliteTable(
+  "contact_email_verifications",
+  {
+    id: text("id").primaryKey(),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id),
+    /** Lowercased, trimmed. */
+    email: text("email").notNull(),
+    /** Random, replaced on every send; the public verify link carries it. */
+    token: text("token").notNull(),
+    /** When the current token was emailed; the link expires a week later. */
+    sentAt: integer("sent_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    /** Verification emails sent for this address in the current day (reset once `sent_at` is a day old). */
+    sendCount: integer("send_count").notNull().default(0),
+    verifiedAt: integer("verified_at", { mode: "timestamp_ms" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("contact_email_verifications_site_email_unique").on(t.siteId, t.email),
+    uniqueIndex("contact_email_verifications_token_unique").on(t.token),
+  ],
 );
 
 /**
@@ -253,4 +296,5 @@ export type User = typeof users.$inferSelect;
 export type Site = typeof sites.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
 export type Domain = typeof domains.$inferSelect;
+export type ContactEmailVerification = typeof contactEmailVerifications.$inferSelect;
 export type OrgIntegration = typeof orgIntegrations.$inferSelect;
