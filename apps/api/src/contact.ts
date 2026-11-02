@@ -1,6 +1,7 @@
 import { SiteDocument, siteLanguages } from "@ministry/schema";
 import { and, count, eq, gte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
+import { isContactEmailVerified } from "./contactEmail";
 import { createSender } from "./email";
 import { contactNotification } from "./email/notification";
 import { formSubmissions, siteVersions, sites } from "./db/schema";
@@ -19,6 +20,8 @@ const MAX_BODY_BYTES = 64 * 1024;
 const SEND_TIMEOUT_MS = 10_000;
 const MAX_USER_AGENT = 300;
 const MAX_DELIVERY_ERROR = 300;
+/** Recorded instead of sending when the contact address has not confirmed it wants the site's messages. */
+export const NOT_VERIFIED_ERROR = "address not verified";
 
 // Something@something.tld with no whitespace and none of the characters that could add a second address.
 const EMAIL_PATTERN = /^[^\s@<>(),;:\\"[\]]+@[^\s@<>(),;:\\"[\]]+\.[^\s@<>(),;:\\"[\]]+$/;
@@ -190,8 +193,12 @@ export async function handleContactSubmission(
     userAgent: (request.headers.get("User-Agent") ?? "").slice(0, MAX_USER_AGENT),
   });
 
+  // Store-only mode keeps the message for the inbox and nothing else. With a provider configured, the
+  // message is only emailed to an address that confirmed the verification link for this site.
   const sender = createSender(env);
-  if (sender) {
+  if (sender && !(await isContactEmailVerified(db, site.id, recipient))) {
+    await db.update(formSubmissions).set({ deliveryError: NOT_VERIFIED_ERROR }).where(eq(formSubmissions.id, id));
+  } else if (sender) {
     try {
       await withTimeout(sender.send(contactNotification({ orgName: doc.meta.orgName, name, email, message, language }, recipient)), SEND_TIMEOUT_MS);
       await db.update(formSubmissions).set({ deliveredAt: new Date(), deliveryError: null }).where(eq(formSubmissions.id, id));

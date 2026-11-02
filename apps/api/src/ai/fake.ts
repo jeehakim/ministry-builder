@@ -1,8 +1,10 @@
 import { emptySiteDocument, type SiteDocument, type Theme } from "@ministry/schema";
-import type { AiCallUsage, AiProvider } from "./provider";
+import { AiProviderError, type AiCallUsage, type AiProvider } from "./provider";
 import { extractTranslatable, mapStrings } from "./translatable";
 
 const USAGE: AiCallUsage = { inputTokens: 100, outputTokens: 200, model: "fake-model", provider: "fake" };
+/** A rewrite with this instruction fails like an unreachable provider, so routes can be tested on that path. */
+export const FAKE_FAILING_INSTRUCTION = "__fail__";
 
 const LOOKS: { label: string; theme: Partial<Theme> }[] = [
   {
@@ -40,7 +42,8 @@ export function createFakeProvider(): AiProvider {
       return { variations, usage: USAGE };
     },
 
-    async rewrite() {
+    async rewrite(input) {
+      if (input.instruction === FAKE_FAILING_INSTRUCTION) throw new AiProviderError("The fake provider was asked to fail.");
       return { text: "Rewritten text.", usage: USAGE };
     },
 

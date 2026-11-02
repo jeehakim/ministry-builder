@@ -2,10 +2,12 @@ import { env } from "cloudflare:workers";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
-import { users } from "../src/db/schema";
+import { contactEmailVerifications, domains, users } from "../src/db/schema";
+import { newId } from "../src/ids";
 import { adminRoutes } from "../src/routes/admin";
 import { aiRoutes } from "../src/routes/ai";
 import { assetRoutes } from "../src/routes/assets";
+import { contactEmailRoutes } from "../src/routes/contactEmail";
 import { domainRoutes } from "../src/routes/domains";
 import { messageRoutes } from "../src/routes/messages";
 import { publishRoutes } from "../src/routes/publish";
@@ -37,6 +39,7 @@ app.route("/", aiRoutes);
 app.route("/", publishRoutes);
 app.route("/", domainRoutes);
 app.route("/", messageRoutes);
+app.route("/", contactEmailRoutes);
 app.route("/", adminRoutes);
 
 export function call(
@@ -72,4 +75,33 @@ export async function uploadPng(user: string, siteId: string): Promise<{ id: str
   const res = await call(user, `/sites/${siteId}/assets`, { method: "POST", body: form });
   if (res.status !== 201) throw new Error(`upload failed: ${res.status}`);
   return (await res.json()) as { id: string; key: string };
+}
+
+/** Inserts a domain row that is already live (ownership proved, hostname active, certificate deployed). */
+export async function insertActiveDomain(siteId: string, hostname: string, kind: "primary" | "redirect" = "primary"): Promise<string> {
+  const id = newId("dom");
+  const now = new Date();
+  await drizzle(env.DB).insert(domains).values({
+    id,
+    siteId,
+    hostname,
+    kind,
+    cfCustomHostnameId: `cfh_${id}`,
+    sslStatus: "active",
+    verifiedAt: now,
+    verificationToken: "0123456789abcdef0123456789abcdef",
+    ownershipVerifiedAt: now,
+  });
+  return id;
+}
+
+/** Marks `email` as a verified contact address for the site, as if its owner had opened the link. */
+export async function verifyContactEmail(siteId: string, email: string): Promise<void> {
+  await drizzle(env.DB).insert(contactEmailVerifications).values({
+    id: newId("cev"),
+    siteId,
+    email: email.trim().toLowerCase(),
+    token: crypto.randomUUID().replace(/-/g, "").repeat(2),
+    verifiedAt: new Date(),
+  });
 }

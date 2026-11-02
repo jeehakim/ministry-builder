@@ -56,14 +56,32 @@ export interface SiteDomain {
   id: string;
   hostname: string;
   kind: DomainKind;
-  /** Cloudflare's certificate status: "pending_validation", "pending_issuance", "active", ... */
+  /** Cloudflare's certificate status: "pending", "pending_validation", "pending_issuance", "active", ... */
   sslStatus: string;
+  /** Set once the ownership TXT record was found. Nothing happens at Cloudflare before that. */
+  ownershipVerifiedAt: string | null;
+  /** Set once Cloudflare saw the CNAME and marked the hostname active. */
   verifiedAt: string | null;
-  /** True once the domain is verified and its certificate is live: it serves the site. */
+  /** True once ownership is proved, the hostname is verified and its certificate is live: it serves the site. */
   active: boolean;
-  /** The DNS record the customer must create at their registrar. */
+  /** The ownership record the customer must create first. */
+  txt: { type: string; name: string; value: string };
+  /** The routing record the customer must create at their registrar. */
   dns: { type: string; name: string; target: string };
+  /** When an unproved domain is removed automatically; null once ownership is proved. */
+  expiresAt: string | null;
   createdAt: string;
+}
+
+/** Whether a site's contact address has confirmed it wants the contact form's messages. */
+export interface ContactEmailStatus {
+  email: string;
+  verified: boolean;
+  verifiedAt: string | null;
+  /** When the last verification email went out; null when none was sent or the address is verified. */
+  sentAt: string | null;
+  /** False when the server has no email provider: messages are stored only, so verification does not apply. */
+  enabled: boolean;
 }
 
 export interface DomainList {
@@ -118,6 +136,9 @@ export interface ApiClient {
   addDomain(siteId: string, hostname: string, kind: DomainKind): Promise<SiteDomain>;
   refreshDomain(siteId: string, domainId: string): Promise<SiteDomain>;
   removeDomain(siteId: string, domainId: string): Promise<void>;
+  contactEmailStatus(siteId: string, email: string): Promise<ContactEmailStatus>;
+  /** Emails a verification link to `email`; the status comes back unverified until the link is opened. */
+  requestContactEmailVerification(siteId: string, email: string): Promise<ContactEmailStatus>;
   /** Deletes the site and everything it owns. */
   deleteSite(id: string): Promise<void>;
   listMessages(siteId: string): Promise<ContactMessage[]>;
@@ -274,6 +295,12 @@ export function createApiClient(getToken: GetToken, baseUrl: string = API_URL): 
     },
     async removeDomain(siteId, domainId) {
       await request<unknown>(`${sitePath(siteId)}/domains/${encodeURIComponent(domainId)}`, json("DELETE"), JSON_TIMEOUT_MS);
+    },
+    contactEmailStatus(siteId, email) {
+      return request<ContactEmailStatus>(`${sitePath(siteId)}/contact-email?email=${encodeURIComponent(email)}`, json("GET"), JSON_TIMEOUT_MS);
+    },
+    requestContactEmailVerification(siteId, email) {
+      return request<ContactEmailStatus>(`${sitePath(siteId)}/contact-email/verify`, json("POST", { email }), JSON_TIMEOUT_MS);
     },
     async deleteSite(id) {
       await request<unknown>(sitePath(id), json("DELETE"), JSON_TIMEOUT_MS);

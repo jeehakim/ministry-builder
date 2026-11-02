@@ -25,6 +25,8 @@
     "ANTHROPIC_MODEL": "claude-opus-5-5",
     // AI calls allowed per user per UTC day.
     "AI_DAILY_LIMIT": "30",
+    // AI calls allowed across every user per UTC day (a backstop; set a hard spend limit at the provider too, see README).
+    "AI_GLOBAL_DAILY_LIMIT": "2000",
     // Per-user and per-site limits (see README). Sites per non-admin user across their organizations.
     "MAX_SITES_PER_USER": "10",
     // Bytes of uploaded images per site (100 MB).
@@ -33,6 +35,9 @@
     "MAX_VERSIONS_PER_SITE": "500",
     // Publishes per site per rolling hour.
     "MAX_PUBLISHES_PER_HOUR": "20",
+    // Custom domains per site, and across every site a non-admin user owns.
+    "MAX_DOMAINS_PER_SITE": "3",
+    "MAX_DOMAINS_PER_USER": "10",
     // Hostname that serves published sites (path form: sites.shofar.io/<slug>/).
     "PUBLIC_SITES_HOST": "sites.shofar.io",
     // This API's own hostname; the hosting handler never treats it as a customer domain.

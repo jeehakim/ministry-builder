@@ -23,6 +23,8 @@ export type Bindings = {
   ANTHROPIC_MODEL?: string;
   /** AI calls allowed per user per UTC day, as a string (var). */
   AI_DAILY_LIMIT: string;
+  /** AI calls allowed across all users per UTC day, as a string (var). Default 2000. */
+  AI_GLOBAL_DAILY_LIMIT?: string;
   /** Hostname that serves published sites, e.g. "sites.shofar.io" (var). */
   PUBLIC_SITES_HOST: string;
   /** Hostname of this API, e.g. "api.build.shofar.io" (var). Requests for it skip the custom-domain lookup. */
@@ -60,6 +62,10 @@ export type Bindings = {
   MAX_VERSIONS_PER_SITE?: string;
   /** Publishes allowed per site per rolling hour, as a string (var). Default 20. */
   MAX_PUBLISHES_PER_HOUR?: string;
+  /** Custom domains (any kind) per site, as a string (var). Default 3. */
+  MAX_DOMAINS_PER_SITE?: string;
+  /** Custom domains across all sites a non-admin user owns, as a string (var). Default 10. */
+  MAX_DOMAINS_PER_USER?: string;
   /** Salt mixed into the visitor IP hash used for rate limiting (var). Defaults to "ministry". */
   FORM_SALT?: string;
 };
