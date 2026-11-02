@@ -7,3 +7,6 @@ dist/
 !.env.example
 *.log
 .DS_Store
+
+# Market research stays local: not for the public repository.
+docs/COMPETITORS.md

@@ -2,7 +2,7 @@
 
 **Project:** Shofar Ministry non-profit initiative
 **Date:** 2026-11-02 (v2; replaces the single-tier v1)
-**Companion:** `docs/COMPETITORS.md` (market and price benchmarks)
+**Companion:** `docs/COMPETITORS.md` (market and price benchmarks; kept out of the public repository, ask the owner)
 **Status:** Draft for decision
 
 ---
@@ -199,7 +199,7 @@ Phase 0 is usable on its own. Phase 2 is where revenue starts; Phase 3 can move 
 
 ## 9. Sources
 
-- Market and price benchmarks: `docs/COMPETITORS.md` (aggregator-sourced; re-verify vendor pages before publishing prices)
+- Market and price benchmarks: `docs/COMPETITORS.md` (not in the repository; aggregator-sourced, re-verify vendor pages before publishing prices)
 - Clerk pricing: https://clerk.com/pricing, https://clerk.com/articles/clerk-pricing-explained
 - OpenAI free tier is a spending ceiling: https://benchlm.ai/free-tier/openai
 - Cloudflare: new projects on Workers: https://developers.cloudflare.com/workers/best-practices/workers-best-practices/
