@@ -4,7 +4,9 @@ import { Home } from "./Home";
 import { EditorPage } from "./editor/EditorPage";
 import { AiGuide } from "./guides/AiGuide";
 import { DomainsGuide } from "./guides/DomainsGuide";
+import { EmailGuide } from "./guides/EmailGuide";
 import { PublishGuide } from "./guides/PublishGuide";
+import { SettingsPage } from "./settings/SettingsPage";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 
@@ -13,9 +15,11 @@ export function App() {
     <Routes>
       <Route path="/" element={<Home />} />
       <Route path="/sites/:id" element={<EditorPage />} />
+      <Route path="/sites/:id/settings" element={<SettingsPage />} />
       <Route path="/guide/ai" element={<AiGuide />} />
       <Route path="/guide/publish" element={<PublishGuide />} />
       <Route path="/guide/domains" element={<DomainsGuide />} />
+      <Route path="/guide/email" element={<EmailGuide />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { ArrowLeft, Download, Inbox, Layers, Loader2, Rocket, Sparkles } from "lucide-react";
+import { ArrowLeft, Download, Inbox, Layers, Loader2, Rocket, Settings, Sparkles } from "lucide-react";
 import type { SiteInfo } from "../api";
 import { useBackend } from "../backend-context";
 import { AiUsagePill } from "../components/AiUsagePill";
@@ -102,6 +102,18 @@ export function EditorHeader(props: {
         <Rocket />
         Publish
       </Button>
+      {backend.integrations ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button asChild variant="ghost" size="icon-sm" aria-label="Site settings">
+              <Link to={`/sites/${encodeURIComponent(site.id)}/settings`}>
+                <Settings />
+              </Link>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Site settings</TooltipContent>
+        </Tooltip>
+      ) : null}
       <HelpMenu />
       <ThemeToggle />
       <UserMenu />

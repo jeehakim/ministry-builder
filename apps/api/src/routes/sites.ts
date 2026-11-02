@@ -4,7 +4,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { loadAuthorizedSite } from "../access";
-import { aiUsage, assets, contactEmailVerifications, domains, formSubmissions, organizations, publishEvents, siteVersions, sites } from "../db/schema";
+import { aiUsage, assets, contactEmailVerifications, domains, formSubmissions, integrationEvents, orgIntegrations, organizations, publishEvents, siteVersions, sites } from "../db/schema";
 import { newId } from "../ids";
 import { limitsFor } from "../limits";
 import { deleteKeys, listKeys, publishedPrefix, publishedUrlFor } from "../published";
@@ -217,7 +217,7 @@ siteRoutes.get("/sites/:id/versions", async (c) => {
 
 /**
  * Deletes a site and everything it owns: versions, uploaded images, published files,
- * form messages, and the organization when this was its last site. AI usage rows keep
+ * form messages, and the organization (with its email integration) when this was its last site. AI usage rows keep
  * their token counts for billing but lose the site reference.
  */
 siteRoutes.delete("/sites/:id", async (c) => {
@@ -250,7 +250,14 @@ siteRoutes.delete("/sites/:id", async (c) => {
   ]);
 
   const [remaining] = await db.select({ n: sql<number>`count(*)` }).from(sites).where(eq(sites.orgId, site.orgId));
-  if ((remaining?.n ?? 0) === 0) await db.delete(organizations).where(eq(organizations.id, site.orgId));
+  if ((remaining?.n ?? 0) === 0) {
+    // The organization's stored provider key and its limit counters go with it.
+    await db.batch([
+      db.delete(orgIntegrations).where(eq(orgIntegrations.orgId, site.orgId)),
+      db.delete(integrationEvents).where(eq(integrationEvents.orgId, site.orgId)),
+      db.delete(organizations).where(eq(organizations.id, site.orgId)),
+    ]);
+  }
 
   return c.json({ ok: true });
 });

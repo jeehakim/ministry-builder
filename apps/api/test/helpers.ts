@@ -9,6 +9,7 @@ import { aiRoutes } from "../src/routes/ai";
 import { assetRoutes } from "../src/routes/assets";
 import { contactEmailRoutes } from "../src/routes/contactEmail";
 import { domainRoutes } from "../src/routes/domains";
+import { integrationRoutes } from "../src/routes/integrations";
 import { messageRoutes } from "../src/routes/messages";
 import { publishRoutes } from "../src/routes/publish";
 import { siteRoutes } from "../src/routes/sites";
@@ -40,6 +41,7 @@ app.route("/", publishRoutes);
 app.route("/", domainRoutes);
 app.route("/", messageRoutes);
 app.route("/", contactEmailRoutes);
+app.route("/", integrationRoutes);
 app.route("/", adminRoutes);
 
 export function call(

@@ -8,6 +8,7 @@ import { aiRoutes } from "./routes/ai";
 import { assetRoutes } from "./routes/assets";
 import { contactEmailRoutes } from "./routes/contactEmail";
 import { domainRoutes } from "./routes/domains";
+import { integrationRoutes } from "./routes/integrations";
 import { messageRoutes } from "./routes/messages";
 import { publishRoutes } from "./routes/publish";
 import { siteRoutes } from "./routes/sites";
@@ -52,6 +53,7 @@ app.route("/", publishRoutes);
 app.route("/", domainRoutes);
 app.route("/", messageRoutes);
 app.route("/", contactEmailRoutes);
+app.route("/", integrationRoutes);
 app.route("/", adminRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
