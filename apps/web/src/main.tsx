@@ -1,7 +1,8 @@
 import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
-import { ClerkProvider, SignedIn, SignedOut, SignIn } from "@clerk/clerk-react";
+import { ClerkLoaded, ClerkLoading, ClerkProvider, SignedIn, SignedOut, SignIn } from "@clerk/clerk-react";
+import { Loader2 } from "lucide-react";
 import { dark } from "@clerk/themes";
 import { ThemeProvider, useTheme } from "@/lib/theme";
 import { App } from "./App";
@@ -17,6 +18,16 @@ function Providers({ children }: { children: ReactNode }) {
   if (LOCAL_MODE) return <LocalBackendProvider>{children}</LocalBackendProvider>;
   return (
     <ClerkProvider publishableKey={CLERK_KEY} appearance={{ baseTheme: resolvedTheme === "dark" ? dark : undefined }}>
+      <ClerkLoading>
+        <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-muted/30 p-6">
+          <Brand className="justify-center" />
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            Connecting to sign-in…
+          </p>
+        </div>
+      </ClerkLoading>
+      <ClerkLoaded>
       <SignedOut>
         <div className="flex min-h-dvh flex-col items-center justify-center gap-8 bg-muted/30 p-6">
           <div className="text-center">
@@ -31,6 +42,7 @@ function Providers({ children }: { children: ReactNode }) {
       <SignedIn>
         <ApiBackendProvider>{children}</ApiBackendProvider>
       </SignedIn>
+      </ClerkLoaded>
     </ClerkProvider>
   );
 }
