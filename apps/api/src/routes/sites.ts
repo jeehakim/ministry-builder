@@ -4,9 +4,9 @@ import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { loadAuthorizedSite } from "../access";
-import { organizations, siteVersions, sites } from "../db/schema";
+import { aiUsage, assets, formSubmissions, organizations, siteVersions, sites } from "../db/schema";
 import { newId } from "../ids";
-import { publishedUrlFor } from "../published";
+import { deleteKeys, listKeys, publishedPrefix, publishedUrlFor } from "../published";
 import { countMessages } from "./messages";
 import type { AppEnv } from "../types";
 
@@ -196,4 +196,33 @@ siteRoutes.get("/sites/:id/versions", async (c) => {
     .where(eq(siteVersions.siteId, site.id))
     .orderBy(desc(siteVersions.createdAt), desc(siteVersions.id));
   return c.json({ versions, currentVersionId: site.currentVersionId });
+});
+
+/**
+ * Deletes a site and everything it owns: versions, uploaded images, published files,
+ * form messages, and the organization when this was its last site. AI usage rows keep
+ * their token counts for billing but lose the site reference.
+ */
+siteRoutes.delete("/sites/:id", async (c) => {
+  const db = drizzle(c.env.DB);
+  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
+  if (!site) return c.json({ error: "Site not found" }, 404);
+
+  // Objects first, then rows: a retry after an interrupted delete still finds the site.
+  await deleteKeys(c.env.PUBLISHED, await listKeys(c.env.PUBLISHED, publishedPrefix(site.id)));
+  await deleteKeys(c.env.IMAGES, await listKeys(c.env.IMAGES, `sites/${site.id}/`));
+
+  await db.update(sites).set({ currentVersionId: null }).where(eq(sites.id, site.id));
+  await db.batch([
+    db.update(aiUsage).set({ siteId: null }).where(eq(aiUsage.siteId, site.id)),
+    db.delete(formSubmissions).where(eq(formSubmissions.siteId, site.id)),
+    db.delete(assets).where(eq(assets.siteId, site.id)),
+    db.delete(siteVersions).where(eq(siteVersions.siteId, site.id)),
+    db.delete(sites).where(eq(sites.id, site.id)),
+  ]);
+
+  const [remaining] = await db.select({ n: sql<number>`count(*)` }).from(sites).where(eq(sites.orgId, site.orgId));
+  if ((remaining?.n ?? 0) === 0) await db.delete(organizations).where(eq(organizations.id, site.orgId));
+
+  return c.json({ ok: true });
 });

@@ -322,3 +322,23 @@ describe("unpublish", () => {
     expect(detail.site).toMatchObject({ status: "draft", publishedUrl: null, publishedAt: null });
   });
 });
+
+describe("site deletion", () => {
+  it("removes versions, assets, published files, messages and an empty org; non-owners get 404", async () => {
+    const { call, uploadPng } = await import("./helpers");
+    const created = await call("user_z", "/sites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orgName: "Gone Soon" }) });
+    const { site } = (await created.json()) as { site: { id: string; orgId: string } };
+    await uploadPng("user_z", site.id);
+    expect((await call("user_z", `/sites/${site.id}/publish`, { method: "POST" })).status).toBe(200);
+    expect((await env.PUBLISHED.list({ prefix: `published/${site.id}/` })).objects.length).toBeGreaterThan(0);
+
+    expect((await call("stranger", `/sites/${site.id}`, { method: "DELETE" })).status).toBe(404);
+    expect((await call("user_z", `/sites/${site.id}`, { method: "DELETE" })).status).toBe(200);
+
+    expect((await call("user_z", `/sites/${site.id}`)).status).toBe(404);
+    expect((await env.PUBLISHED.list({ prefix: `published/${site.id}/` })).objects).toHaveLength(0);
+    expect((await env.IMAGES.list({ prefix: `sites/${site.id}/` })).objects).toHaveLength(0);
+    const org = await env.DB.prepare("SELECT id FROM organizations WHERE id = ?").bind(site.orgId).first();
+    expect(org).toBeNull();
+  });
+});
