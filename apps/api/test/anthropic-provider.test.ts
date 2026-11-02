@@ -243,3 +243,53 @@ describe("createProvider with Anthropic", () => {
     expect(createProvider({ ...base, OPENAI_API_KEY: "sk-test", ANTHROPIC_API_KEY: "sk-ant-test" })).not.toBeNull();
   });
 });
+
+describe("Anthropic provider: translate", () => {
+  function translatable() {
+    const doc = emptySiteDocument("Grace Church");
+    doc.meta.language = "en";
+    doc.meta.description = "A welcoming church in Dallas";
+    for (const section of doc.sections) {
+      if (section.type === "hero") section.primaryCta = { label: "Visit us", href: "https://example.org/visit-secret" };
+      if (section.type === "contact") section.email = "pastor@example.org";
+      if (section.type === "programs") {
+        section.items = [
+          { title: "Kids Club", description: "Games and stories", image: { src: "/assets/sites/s1/kids-secret.png", alt: "kids" } },
+          { title: "Youth", description: "" },
+        ];
+      }
+    }
+    return doc;
+  }
+  const spanish = JSON.stringify({
+    meta: { tagline: "Una frase breve", description: "Una iglesia acogedora" },
+    sections: {
+      hero: { heading: "Bienvenidos", primaryCta: { label: "Visítenos" } },
+      programs: { items: [{ title: "Kids Club", description: "Juegos e historias" }, {}] },
+    },
+  });
+
+  it("sends only translatable text and returns the overlay with usage", async () => {
+    const { ai, stream, body } = provider([{ content: spanish, inputTokens: 10, outputTokens: 20 }]);
+    const result = await ai.translate({ document: translatable(), targetLanguage: "es", sourceLanguage: "en" });
+
+    const user = JSON.stringify(body(0).messages);
+    for (const secret of ["visit-secret", "kids-secret", "pastor@example.org", "/assets/"]) {
+      expect(user).not.toContain(secret);
+    }
+    expect(user).toContain("Kids Club");
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 20, model: "claude-test", provider: "anthropic" });
+    expect(result.overlay).toMatchObject({ meta: { tagline: "Una frase breve" }, sections: { hero: { heading: "Bienvenidos" } } });
+  });
+
+  it("skips the model entirely for a document with no translatable text", async () => {
+    const { ai, stream } = provider([]);
+    const doc = emptySiteDocument("X");
+    doc.meta.tagline = "";
+    doc.sections = [];
+    const result = await ai.translate({ document: doc, targetLanguage: "es", sourceLanguage: "en" });
+    expect(stream).not.toHaveBeenCalled();
+    expect(result.overlay).toEqual({ meta: {}, sections: {} });
+  });
+});

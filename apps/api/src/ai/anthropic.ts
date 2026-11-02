@@ -11,8 +11,11 @@ import {
   rewriteUserText,
   themeSystemPrompt,
   themeUserText,
+  translateSystemPrompt,
+  translateUserText,
 } from "./prompts";
-import { AltOutput, draftOutputSchema, RewriteOutput, ThemeOutput } from "./schemas";
+import { AltOutput, draftOutputSchema, RewriteOutput, ThemeOutput, translationOutputSchema } from "./schemas";
+import { extractTranslatable, isEmptyTranslatable } from "./translatable";
 
 type ContentPart = Anthropic.TextBlockParam | Anthropic.ImageBlockParam;
 type Message = Anthropic.MessageParam;
@@ -28,6 +31,8 @@ const SMALL_TIMEOUT_MS = 45_000;
 /** Thinking tokens count toward this cap, so leave room beyond the visible JSON. */
 const DRAFT_MAX_TOKENS = 32_000;
 const SMALL_MAX_TOKENS = 8_000;
+const TRANSLATE_TIMEOUT_MS = 90_000;
+const TRANSLATE_MAX_TOKENS = 16_000;
 
 const FRIENDLY_UNAVAILABLE = "The AI service is unavailable right now. Please try again in a moment.";
 const FRIENDLY_BAD_OUTPUT = "The AI returned an answer we could not use. Please try again.";
@@ -271,6 +276,21 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): AiPr
         maxTokens: SMALL_MAX_TOKENS,
       });
       return { alt: data.alt, usage };
+    },
+
+    async translate(input) {
+      const source = extractTranslatable(input.document);
+      if (isEmptyTranslatable(source)) {
+        return { overlay: { meta: {}, sections: {} }, usage: { inputTokens: 0, outputTokens: 0, model, provider: PROVIDER } };
+      }
+      const { data, usage } = await run({
+        system: translateSystemPrompt(input.sourceLanguage, input.targetLanguage),
+        user: [{ type: "text", text: translateUserText(source) }],
+        schema: translationOutputSchema(source),
+        timeout: TRANSLATE_TIMEOUT_MS,
+        maxTokens: TRANSLATE_MAX_TOKENS,
+      });
+      return { overlay: data, usage };
     },
   };
 }
