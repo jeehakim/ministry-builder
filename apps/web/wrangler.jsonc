@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ministry-web",
+  "compatibility_date": "2026-10-13",
+  "observability": { "enabled": true },
+
+  // Production route (zone shofar.io). Uncomment once the zone is ready:
+  // "routes": [{ "pattern": "build.shofar.io", "custom_domain": true }],
+
+  // Static SPA: every unknown path serves index.html so client routes like /sites/:id work.
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}

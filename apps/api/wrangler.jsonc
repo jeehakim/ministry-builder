@@ -11,7 +11,7 @@
 
   "vars": {
     // Origin of the web app allowed by CORS. Override per environment.
-    "ALLOWED_ORIGIN": "http://localhost:5173"
+    "ALLOWED_ORIGIN": "https://ministry-web.jeeha-kim.workers.dev"
   },
 
   "d1_databases": [
@@ -19,7 +19,7 @@
       "binding": "DB",
       "database_name": "ministry-sites",
       // Paste the id printed by `wrangler d1 create ministry-sites`.
-      "database_id": "REPLACE_WITH_DATABASE_ID",
+      "database_id": "8bdedc79-f57f-4445-84c3-cfc31174382b",
       "migrations_dir": "migrations"
     }
   ],
