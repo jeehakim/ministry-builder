@@ -22,11 +22,11 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { z } from "zod";
-import { isSiteAssetKey, loadAuthorizedSite } from "../access";
+import { isSiteAssetKey, loadOrgAccess, requireSiteRole } from "../access";
 import { AiProviderError, createProvider, type AiCallUsage, type AiProvider } from "../ai";
 import type { TemplateChoice } from "../ai/provider";
-import { dailyLimit, usedToday, utcDayWindow } from "../ai/usage";
-import { aiUsage, organizations, siteVersions, sites, type Site } from "../db/schema";
+import { dailyLimit, orgDailyLimit, orgUsedToday, usedToday, utcDayWindow } from "../ai/usage";
+import { aiUsage, siteVersions, sites, type Site } from "../db/schema";
 import { newId } from "../ids";
 import { errorFields, logError, requestIdOf, scrub } from "../log";
 import { LANGUAGE_PATH_PATTERN } from "../published";
@@ -69,31 +69,28 @@ async function parseBody<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.o
  */
 async function guard(c: Ctx): Promise<Guard | Response> {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id") ?? "");
-  if (!site) return c.json({ error: "Site not found" }, 404);
-  const [org] = await db
-    .select({ name: organizations.name })
-    .from(organizations)
-    .where(eq(organizations.id, site.orgId))
-    .limit(1);
+  const access = await requireSiteRole(c, db, c.req.param("id") ?? "", "editor");
+  if (access instanceof Response) return access;
+  const { site, org } = access;
 
   const provider = createProvider(c.env);
   if (!provider) return c.json({ error: "AI is not configured on this server" }, 503);
 
-  const used = await usedToday(db, c.var.user.id);
+  // The organization's quota is the budget; the per-user limit is a guard against one member spending it all.
+  const resetsAt = utcDayWindow().resetsAt.toISOString();
+  const [used, orgUsed] = await Promise.all([usedToday(db, c.var.user.id), orgUsedToday(db, org.id)]);
   const limit = dailyLimit(c.env);
   if (used >= limit) {
+    return c.json({ error: "Daily AI limit reached. It resets at midnight UTC.", scope: "user", used, limit, resetsAt }, 429);
+  }
+  const orgLimit = orgDailyLimit(c.env);
+  if (orgUsed >= orgLimit) {
     return c.json(
-      {
-        error: "Daily AI limit reached. It resets at midnight UTC.",
-        used,
-        limit,
-        resetsAt: utcDayWindow().resetsAt.toISOString(),
-      },
+      { error: `Your organization's daily AI limit (${orgLimit}) is used up. It resets at midnight UTC.`, scope: "organization", used: orgUsed, limit: orgLimit, resetsAt },
       429,
     );
   }
-  return { site, provider, orgName: org?.name ?? "Your organization" };
+  return { site, provider, orgName: org.name };
 }
 
 const AUDIT_MAX_CHARS = 4000;
@@ -107,7 +104,7 @@ function audit(value: unknown): string | null {
 
 function usageRow(
   userId: string,
-  siteId: string,
+  site: Pick<Site, "id" | "orgId">,
   action: AiAction,
   usage: AiCallUsage,
   trail: { request?: unknown; result?: unknown } = {},
@@ -115,7 +112,8 @@ function usageRow(
   return {
     id: newId("aiu"),
     userId,
-    siteId,
+    siteId: site.id,
+    orgId: site.orgId,
     action,
     provider: usage.provider,
     model: usage.model,
@@ -169,14 +167,21 @@ async function checkImageKey(c: Ctx, siteId: string, key: string | undefined): P
 
 export const aiRoutes = new Hono<AppEnv>();
 
+/** Today's use by the caller, plus their organization's when `?orgId=` names one they belong to. */
 aiRoutes.get("/ai/usage", async (c) => {
-  const used = await usedToday(drizzle(c.env.DB), c.var.user.id);
+  const db = drizzle(c.env.DB);
+  const used = await usedToday(db, c.var.user.id);
   const body: AiUsageResponse = {
     used,
     limit: dailyLimit(c.env),
     resetsAt: utcDayWindow().resetsAt.toISOString(),
     available: createProvider(c.env) !== null,
   };
+  const orgId = c.req.query("orgId");
+  if (orgId) {
+    const access = await loadOrgAccess(db, c.var.user, orgId);
+    if (access) body.organization = { used: await orgUsedToday(db, access.org.id), limit: orgDailyLimit(c.env) };
+  }
   return c.json(body);
 });
 
@@ -219,7 +224,7 @@ aiRoutes.post("/sites/:id/ai/draft", tooLarge, async (c) => {
 
   // Tokens were spent whether or not the output was usable, so the call counts against the quota.
   const usage = db.insert(aiUsage).values(
-    usageRow(c.var.user.id, g.site.id, "draft", result.usage, {
+    usageRow(c.var.user.id, g.site, "draft", result.usage, {
       request: { notes: body.notes, language: body.language, variations: body.variations, styleNotes: body.styleNotes, referenceAssetKey: body.referenceAssetKey },
       result: { variationGroupId, versionIds: variations.map((v) => v.versionId), labels: variations.map((v) => v.label) },
     }),
@@ -255,7 +260,7 @@ aiRoutes.post("/sites/:id/ai/rewrite", tooLarge, async (c) => {
   if (result instanceof Response) return result;
 
   await drizzle(c.env.DB).insert(aiUsage).values(
-    usageRow(c.var.user.id, g.site.id, "rewrite", result.usage, { request: { instruction: body.instruction, context: body.context, text: body.text }, result: { text: result.text } }),
+    usageRow(c.var.user.id, g.site, "rewrite", result.usage, { request: { instruction: body.instruction, context: body.context, text: body.text }, result: { text: result.text } }),
   );
   const response: AiRewriteResponse = { text: result.text };
   return c.json(response);
@@ -275,7 +280,7 @@ aiRoutes.post("/sites/:id/ai/theme", tooLarge, async (c) => {
   if (result instanceof Response) return result;
 
   await drizzle(c.env.DB).insert(aiUsage).values(
-    usageRow(c.var.user.id, g.site.id, "theme", result.usage, { request: { description: body.description, referenceAssetKey: body.referenceAssetKey }, result: result }),
+    usageRow(c.var.user.id, g.site, "theme", result.usage, { request: { description: body.description, referenceAssetKey: body.referenceAssetKey }, result: result }),
   );
   const parsed = Theme.safeParse(result.theme);
   if (!parsed.success) {
@@ -302,7 +307,7 @@ aiRoutes.post("/sites/:id/ai/alt-text", tooLarge, async (c) => {
   if (result instanceof Response) return result;
 
   await drizzle(c.env.DB).insert(aiUsage).values(
-    usageRow(c.var.user.id, g.site.id, "alt_text", result.usage, { request: { assetKey: body.assetKey }, result: { alt: result.alt } }),
+    usageRow(c.var.user.id, g.site, "alt_text", result.usage, { request: { assetKey: body.assetKey }, result: { alt: result.alt } }),
   );
   const response: AiAltTextResponse = { alt: result.alt };
   return c.json(response);
@@ -343,7 +348,7 @@ aiRoutes.post("/sites/:id/ai/translate", tooLarge, async (c) => {
   // Tokens were spent whether or not the output was usable, so the call counts against the quota.
   const versionId = newId("ver");
   const usage = db.insert(aiUsage).values(
-    usageRow(c.var.user.id, g.site.id, "translate", result.usage, { request: { language: body.language }, result: { versionId } }),
+    usageRow(c.var.user.id, g.site, "translate", result.usage, { request: { language: body.language }, result: { versionId } }),
   );
   const overlay = TranslationOverlay.safeParse(result.overlay);
   if (!overlay.success) {

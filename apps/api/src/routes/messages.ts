@@ -1,7 +1,7 @@
 import { and, count, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
-import { loadAuthorizedSite } from "../access";
+import { requireSiteRole } from "../access";
 import { formSubmissions } from "../db/schema";
 import type { AppEnv } from "../types";
 
@@ -13,8 +13,9 @@ export const messageRoutes = new Hono<AppEnv>();
 
 messageRoutes.get("/sites/:id/messages", async (c) => {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id"), "viewer");
+  if (access instanceof Response) return access;
+  const { site } = access;
 
   const requested = Number.parseInt(c.req.query("limit") ?? "", 10);
   const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), MAX_LIMIT) : DEFAULT_LIMIT;
@@ -39,8 +40,9 @@ messageRoutes.get("/sites/:id/messages", async (c) => {
 
 messageRoutes.delete("/sites/:id/messages/:msgId", async (c) => {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id"), "editor");
+  if (access instanceof Response) return access;
+  const { site } = access;
 
   const [message] = await db
     .select({ id: formSubmissions.id })

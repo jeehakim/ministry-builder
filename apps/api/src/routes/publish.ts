@@ -4,8 +4,9 @@ import { renderSite, renderThanksPage, type RenderOptions } from "@ministry/temp
 import { and, asc, eq, gte, lt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
-import { isSiteAssetKey, loadAuthorizedSite } from "../access";
+import { isSiteAssetKey, requireSiteRole } from "../access";
 import { publishEvents, siteVersions, sites } from "../db/schema";
+import { orgEventInsert } from "../events";
 import { newId } from "../ids";
 import { limitsFor, PUBLISH_WINDOW_MS } from "../limits";
 import { sanitizeDocumentForPublish } from "../publishSafety";
@@ -59,8 +60,9 @@ export const publishRoutes = new Hono<AppEnv>();
 
 publishRoutes.post("/sites/:id/publish", async (c) => {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id"), "editor");
+  if (access instanceof Response) return access;
+  const { site } = access;
   if (!site.currentVersionId) return c.json({ error: "Site has no content to publish" }, 409);
 
   const [version] = await db
@@ -172,24 +174,25 @@ publishRoutes.post("/sites/:id/publish", async (c) => {
 
   const publishedAt = new Date();
   const publishedPath = `/${site.slug}/`;
-  await db
-    .update(sites)
-    .set({ status: "published", publishedAt, publishedPath, updatedAt: publishedAt })
-    .where(eq(sites.id, site.id));
+  await db.batch([
+    db.update(sites).set({ status: "published", publishedAt, publishedPath, updatedAt: publishedAt }).where(eq(sites.id, site.id)),
+    orgEventInsert(db, { orgId: site.orgId, actorUserId: c.var.user.id, action: "site.published", target: site.id, detail: { slug: site.slug, languages } }),
+  ]);
 
   return c.json({ url: publishedUrlFor(c.env, publishedPath), publishedAt: publishedAt.toISOString() });
 });
 
 publishRoutes.post("/sites/:id/unpublish", async (c) => {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id"), "editor");
+  if (access instanceof Response) return access;
+  const { site } = access;
 
   // Flip the status first so the site stops resolving even if object deletion is interrupted.
-  await db
-    .update(sites)
-    .set({ status: "draft", publishedAt: null, publishedPath: null, updatedAt: new Date() })
-    .where(eq(sites.id, site.id));
+  await db.batch([
+    db.update(sites).set({ status: "draft", publishedAt: null, publishedPath: null, updatedAt: new Date() }).where(eq(sites.id, site.id)),
+    orgEventInsert(db, { orgId: site.orgId, actorUserId: c.var.user.id, action: "site.unpublished", target: site.id, detail: { slug: site.slug } }),
+  ]);
   await deleteKeys(c.env.PUBLISHED, await listKeys(c.env.PUBLISHED, publishedPrefix(site.id)));
 
   return c.json({ ok: true });

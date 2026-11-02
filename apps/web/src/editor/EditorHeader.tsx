@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { ArrowLeft, Download, Inbox, Layers, Loader2, Rocket, Settings, Sparkles } from "lucide-react";
+import { ArrowLeft, Download, Eye, Inbox, Layers, Loader2, Rocket, Settings, Sparkles } from "lucide-react";
 import type { SiteInfo } from "../api";
 import { useBackend } from "../backend-context";
 import { AiUsagePill } from "../components/AiUsagePill";
@@ -9,7 +9,10 @@ import { SaveIndicator } from "../components/SaveIndicator";
 import { HelpMenu } from "../components/HelpMenu";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { UserMenu } from "../components/UserMenu";
+import { can } from "../lib/roles";
+import { OrgSwitcher } from "../orgs/OrgSwitcher";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -35,6 +38,9 @@ export function EditorHeader(props: {
   const drafting = busy[DRAFT_BUSY_KEY] === true;
   // aria-disabled (not disabled) so keyboard users can still focus the button and hear why it is off.
   const gated = !enabled;
+  const canEdit = can(site.role, "edit");
+  const canPublish = can(site.role, "publish");
+  const canUseAi = can(site.role, "ai");
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
@@ -49,38 +55,55 @@ export function EditorHeader(props: {
         <TooltipContent side="bottom">Your sites</TooltipContent>
       </Tooltip>
       <Brand compact />
+      <OrgSwitcher leaveOnSelect />
       <Separator orientation="vertical" className="h-5!" />
       <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{orgName || "Untitled site"}</h1>
 
-      {hasVariations ? (
+      {hasVariations && canEdit ? (
         <Button variant="ghost" size="sm" onClick={onVariations}>
           <Layers />
           Variations
         </Button>
       ) : null}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            aria-disabled={gated || undefined}
-            className={cn(gated && "cursor-not-allowed opacity-50")}
-            onClick={() => {
-              if (!gated) onDraft();
-            }}
-          >
-            {drafting ? <Loader2 className="animate-spin" /> : <Sparkles />}
-            {drafting ? "Drafting…" : "Draft with AI"}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">
-          {gated ? disabledReason : drafting ? "Your draft is being written" : "Write a full page from your notes"}
-        </TooltipContent>
-      </Tooltip>
-      <AiUsagePill />
+      {canUseAi ? (
+        <>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                aria-disabled={gated || undefined}
+                className={cn(gated && "cursor-not-allowed opacity-50")}
+                onClick={() => {
+                  if (!gated) onDraft();
+                }}
+              >
+                {drafting ? <Loader2 className="animate-spin" /> : <Sparkles />}
+                {drafting ? "Drafting…" : "Draft with AI"}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {gated ? disabledReason : drafting ? "Your draft is being written" : "Write a full page from your notes"}
+            </TooltipContent>
+          </Tooltip>
+          <AiUsagePill />
+        </>
+      ) : null}
 
       <Separator orientation="vertical" className="h-5!" />
-      <SaveIndicator state={save} />
+      {canEdit ? (
+        <SaveIndicator state={save} />
+      ) : (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge variant="secondary" tabIndex={0} className="gap-1 font-normal">
+              <Eye aria-hidden="true" />
+              View only
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">You can look around, but only editors and above can change this site.</TooltipContent>
+        </Tooltip>
+      )}
       <PublishedBadge url={site.publishedUrl} />
       <Separator orientation="vertical" className="h-5!" />
       {backend.messages ? (
@@ -98,10 +121,12 @@ export function EditorHeader(props: {
         {exporting ? <Loader2 className="animate-spin" /> : <Download />}
         Export
       </Button>
-      <Button size="sm" onClick={onPublish}>
-        <Rocket />
-        Publish
-      </Button>
+      {canPublish ? (
+        <Button size="sm" onClick={onPublish}>
+          <Rocket />
+          Publish
+        </Button>
+      ) : null}
       {backend.integrations ? (
         <Tooltip>
           <TooltipTrigger asChild>

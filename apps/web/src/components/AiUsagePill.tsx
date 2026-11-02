@@ -17,6 +17,8 @@ export function AiUsagePill() {
     text = `AI ${usage.usage.used}/${usage.usage.limit}`;
     const when = formatClockTime(usage.usage.resetsAt);
     tip = when ? `AI actions used today, resets at ${when}` : "AI actions used today";
+    const shared = usage.usage.organization;
+    if (shared) tip += `. Your organization has used ${shared.used} of ${shared.limit} today.`;
   } else if (usage.kind === "error") {
     text = "AI ?";
     tip = "Could not load today's AI usage.";

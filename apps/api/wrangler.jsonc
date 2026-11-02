@@ -25,6 +25,8 @@
     "ANTHROPIC_MODEL": "claude-opus-5-5",
     // AI calls allowed per user per UTC day.
     "AI_DAILY_LIMIT": "30",
+    // AI calls allowed per organization per UTC day, all members together.
+    "AI_DAILY_LIMIT_ORG": "100",
     // Per-user and per-site limits (see README). Sites per non-admin user across their organizations.
     "MAX_SITES_PER_USER": "10",
     // Bytes of uploaded images per site (100 MB).

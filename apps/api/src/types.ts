@@ -23,6 +23,10 @@ export type Bindings = {
   ANTHROPIC_MODEL?: string;
   /** AI calls allowed per user per UTC day, as a string (var). */
   AI_DAILY_LIMIT: string;
+  /** AI calls allowed per organization per UTC day, all members together, as a string (var). Default 100. */
+  AI_DAILY_LIMIT_ORG?: string;
+  /** Secret. Clerk webhook signing secret (`whsec_…`) for POST /webhooks/clerk. Unset disables the endpoint (503). */
+  CLERK_WEBHOOK_SECRET?: string;
   /** Hostname that serves published sites, e.g. "sites.shofar.io" (var). */
   PUBLIC_SITES_HOST: string;
   /** Hostname of this API, e.g. "api.build.shofar.io" (var). Requests for it skip the custom-domain lookup. */
