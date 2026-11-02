@@ -1,26 +1,37 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { SiteDocument, type Section } from "@ministry/schema";
+import { AlertCircle, ArrowLeft, Download, ExternalLink, Loader2, Monitor, Rocket, Smartphone } from "lucide-react";
+import { toast } from "sonner";
 import { useBackend } from "../backend-context";
-import { SaveIndicator } from "../components/SaveIndicator";
+import { Brand } from "../components/Brand";
 import { PublishModal } from "../components/PublishModal";
-import { btnCls, btnPrimaryCls } from "../components/ui";
+import { SaveIndicator } from "../components/SaveIndicator";
+import { ThemeToggle } from "../components/ThemeToggle";
+import { UserMenu } from "../components/UserMenu";
 import { buildExportZip, downloadBlob, exportFileName } from "../lib/exportZip";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatIssue } from "./documentOps";
 import { SiteIdProvider } from "./EditorContext";
 import { FieldsForm } from "./FieldsForm";
-import { SECTION_FIELDS, type Obj } from "./fields";
+import { SECTION_FIELDS, SECTION_LABELS, type Obj } from "./fields";
 import { Preview, type Device } from "./Preview";
-import { SectionList } from "./SectionList";
+import { SectionList, sectionTitle } from "./SectionList";
+import { SECTION_ICONS } from "./sectionMeta";
 import { SiteForm } from "./SiteForm";
 import { useSiteDocument } from "./useSiteDocument";
-import { UserMenu } from "../components/UserMenu";
+import { renderSite } from "@ministry/templates";
 
 type Tab = "sections" | "site";
 
 export function EditorPage() {
   const { id } = useParams();
-  if (!id) return <p className="p-6 text-sm text-red-700">Missing site id.</p>;
+  if (!id) return <ErrorScreen message="Missing site id." />;
   return <Editor siteId={id} />;
 }
 
@@ -32,7 +43,6 @@ function Editor({ siteId }: { siteId: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState<string | null>(null);
 
   const ready = editor.load.kind === "ready" ? editor.load : null;
   const doc = ready?.doc ?? null;
@@ -43,97 +53,102 @@ function Editor({ siteId }: { siteId: string }) {
     [doc, selectedId],
   );
 
+  useEffect(() => {
+    if (editor.save.kind === "error") toast.error("Could not save", { description: editor.save.message });
+  }, [editor.save]);
+
   async function handleExport() {
     if (!doc) return;
     setExporting(true);
-    setExportError(null);
     try {
       const parsed = SiteDocument.safeParse(doc);
       if (!parsed.success) throw new Error(`Fix this before exporting: ${formatIssue(parsed.error)}`);
       const blob = await buildExportZip(parsed.data, backend);
       downloadBlob(blob, exportFileName(parsed.data, siteSlug, backend.mode));
+      toast.success("ZIP downloaded", { description: "Drop it on cloudflare.com/drop to go live." });
     } catch (err) {
-      setExportError(err instanceof Error ? err.message : "Export failed.");
+      toast.error("Export failed", { description: err instanceof Error ? err.message : "Something went wrong." });
     } finally {
       setExporting(false);
     }
   }
 
-  if (editor.load.kind === "loading") return <p className="p-6 text-sm text-slate-600">Loading site...</p>;
+  function openPreviewTab() {
+    if (!doc) return;
+    try {
+      const { html } = renderSite(doc, { imageUrl: (ref) => backend.imageUrl(ref) });
+      const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      toast.error("Preview failed", { description: err instanceof Error ? err.message : "Something went wrong." });
+    }
+  }
+
+  if (editor.load.kind === "loading") return <LoadingScreen />;
   if (editor.load.kind === "error" || !doc) {
-    return (
-      <div className="p-6">
-        <p role="alert" className="text-sm text-red-700">
-          {editor.load.kind === "error" ? editor.load.message : "Site not found."}
-        </p>
-        <Link to="/" className="mt-2 inline-block text-sm text-sky-700 underline">
-          Back to your sites
-        </Link>
-      </div>
-    );
+    return <ErrorScreen message={editor.load.kind === "error" ? editor.load.message : "Site not found."} />;
   }
 
   const issue = editor.save.kind === "invalid" ? editor.save.message : null;
+  const SelectedIcon = selected ? SECTION_ICONS[selected.type] : null;
 
   return (
     <SiteIdProvider value={siteId}>
-      <div className="flex h-screen flex-col">
-        <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-2">
-          <Link to="/" className="text-sm text-slate-500 hover:text-slate-900">
-            Sites
-          </Link>
-          <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">{doc.meta.orgName || "Untitled site"}</h1>
+      <div className="flex h-dvh flex-col bg-background">
+        <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button asChild variant="ghost" size="icon-sm" aria-label="Back to your sites">
+                <Link to="/">
+                  <ArrowLeft />
+                </Link>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Your sites</TooltipContent>
+          </Tooltip>
+          <Brand compact />
+          <Separator orientation="vertical" className="h-5!" />
+          <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{doc.meta.orgName || "Untitled site"}</h1>
           <SaveIndicator state={editor.save} />
-          <button type="button" className={btnCls} disabled={exporting} onClick={() => void handleExport()}>
-            {exporting ? "Exporting..." : "Export ZIP"}
-          </button>
-          <button type="button" className={btnPrimaryCls} onClick={() => setPublishOpen(true)}>
+          <Separator orientation="vertical" className="h-5!" />
+          <Button variant="outline" size="sm" disabled={exporting} onClick={() => void handleExport()}>
+            {exporting ? <Loader2 className="animate-spin" /> : <Download />}
+            Export
+          </Button>
+          <Button size="sm" onClick={() => setPublishOpen(true)}>
+            <Rocket />
             Publish
-          </button>
+          </Button>
+          <ThemeToggle />
           <UserMenu />
         </header>
 
-        {exportError && !publishOpen ? (
-          <p role="alert" className="border-b border-red-200 bg-red-50 px-4 py-1.5 text-sm text-red-800">
-            {exportError}
-          </p>
-        ) : null}
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(340px,400px)_1fr]">
+          <aside className="flex min-h-0 flex-col border-r bg-sidebar">
+            <Tabs value={tab} onValueChange={(v) => setTab(v === "site" ? "site" : "sections")} className="flex min-h-0 flex-1 flex-col gap-0">
+              <div className="shrink-0 border-b px-3 pt-2">
+                <TabsList variant="line" className="w-full">
+                  <TabsTrigger value="sections">Sections</TabsTrigger>
+                  <TabsTrigger value="site">Site & design</TabsTrigger>
+                </TabsList>
+              </div>
 
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(320px,420px)_1fr]">
-          <aside className="flex min-h-0 flex-col border-r border-slate-200 bg-slate-50">
-            <div role="tablist" aria-label="Editor" className="flex border-b border-slate-200 bg-white">
-              {(["sections", "site"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  role="tab"
-                  id={`tab-${t}`}
-                  aria-selected={tab === t}
-                  aria-controls={`panel-${t}`}
-                  onClick={() => setTab(t)}
-                  className={`flex-1 border-b-2 px-3 py-2 text-sm font-medium capitalize ${
-                    tab === t ? "border-sky-700 text-sky-800" : "border-transparent text-slate-500 hover:text-slate-800"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-
-            <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
               {issue ? (
-                <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                  {issue}
+                <p role="alert" className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                  <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  <span>{issue}</span>
                 </p>
               ) : null}
 
-              {tab === "sections" ? (
-                <>
+              <TabsContent value="sections" className="min-h-0 flex-1 overflow-y-auto">
+                <div className="space-y-5 p-3">
                   <SectionList
                     sections={doc.sections}
                     selectedId={selected?.id ?? null}
                     onSelect={setSelectedId}
                     onMove={editor.moveSection}
+                    onReorder={editor.reorderSection}
                     onToggleHidden={editor.toggleHidden}
                     onDelete={editor.removeSection}
                     onAdd={(type) => {
@@ -141,8 +156,17 @@ function Editor({ siteId }: { siteId: string }) {
                       setSelectedId(null);
                     }}
                   />
-                  {selected ? (
-                    <section aria-label={`Edit ${selected.type} section`} className="rounded-md border border-slate-200 bg-white p-3">
+                  {selected && SelectedIcon ? (
+                    <section aria-label={`Edit ${selected.type} section`} className="rounded-xl border bg-card p-3 shadow-xs">
+                      <div className="mb-3 flex items-center gap-2">
+                        <span className="grid size-6 place-items-center rounded-md bg-muted text-muted-foreground">
+                          <SelectedIcon className="size-3.5" aria-hidden="true" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{sectionTitle(selected)}</p>
+                          <p className="text-[11px] text-muted-foreground">{SECTION_LABELS[selected.type]} section</p>
+                        </div>
+                      </div>
                       <FieldsForm
                         key={selected.id}
                         value={selected}
@@ -151,48 +175,99 @@ function Editor({ siteId }: { siteId: string }) {
                       />
                     </section>
                   ) : null}
-                </>
-              ) : (
-                <SiteForm doc={doc} update={editor.update} />
-              )}
-            </div>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="site" className="min-h-0 flex-1 overflow-y-auto">
+                <div className="p-3">
+                  <SiteForm doc={doc} update={editor.update} />
+                </div>
+              </TabsContent>
+            </Tabs>
           </aside>
 
           <main className="flex min-h-0 flex-col">
-            <div className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-1.5">
-              <span className="text-xs font-medium text-slate-500">Live preview</span>
-              <div role="group" aria-label="Preview width" className="flex overflow-hidden rounded-md border border-slate-300">
-                {(["desktop", "mobile"] as const).map((d) => (
-                  <button
-                    key={d}
-                    type="button"
-                    aria-pressed={device === d}
-                    onClick={() => setDevice(d)}
-                    className={`px-3 py-1 text-xs capitalize ${device === d ? "bg-slate-800 text-white" : "bg-white text-slate-700 hover:bg-slate-50"}`}
-                  >
-                    {d}
-                  </button>
-                ))}
+            <div className="flex h-10 shrink-0 items-center justify-between border-b px-3">
+              <span className="text-xs font-medium text-muted-foreground">Live preview</span>
+              <div className="flex items-center gap-1">
+                <ToggleGroup
+                  type="single"
+                  size="sm"
+                  variant="outline"
+                  value={device}
+                  onValueChange={(v) => {
+                    if (v === "desktop" || v === "mobile") setDevice(v);
+                  }}
+                  aria-label="Preview width"
+                >
+                  <ToggleGroupItem value="desktop" aria-label="Desktop width">
+                    <Monitor />
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="mobile" aria-label="Phone width">
+                    <Smartphone />
+                  </ToggleGroupItem>
+                </ToggleGroup>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="icon-sm" aria-label="Open preview in a new tab" onClick={openPreviewTab}>
+                      <ExternalLink />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Open in a new tab</TooltipContent>
+                </Tooltip>
               </div>
             </div>
             <div className="min-h-0 flex-1">
-              <Preview doc={doc} device={device} focusSectionId={tab === "sections" ? (selected?.id ?? null) : null} />
+              <Preview
+                doc={doc}
+                device={device}
+                hostname={`${siteSlug}.sites.shofar.io`}
+                focusSectionId={tab === "sections" ? (selected?.id ?? null) : null}
+              />
             </div>
           </main>
         </div>
 
-        {publishOpen ? (
-          <PublishModal
-            busy={exporting}
-            error={exportError}
-            onDownload={() => void handleExport()}
-            onClose={() => {
-              setPublishOpen(false);
-              setExportError(null);
-            }}
-          />
-        ) : null}
+        <PublishModal open={publishOpen} busy={exporting} onOpenChange={setPublishOpen} onDownload={() => void handleExport()} />
       </div>
     </SiteIdProvider>
+  );
+}
+
+function LoadingScreen() {
+  return (
+    <div className="flex h-dvh flex-col">
+      <div className="flex h-12 items-center gap-3 border-b px-3">
+        <Skeleton className="size-7 rounded-lg" />
+        <Skeleton className="h-4 w-40" />
+      </div>
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(340px,400px)_1fr]">
+        <div className="space-y-2 border-r p-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-11 rounded-lg" />
+          ))}
+        </div>
+        <div className="preview-canvas p-6">
+          <Skeleton className="h-full rounded-xl" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ErrorScreen({ message }: { message: string }) {
+  return (
+    <div className="flex h-dvh flex-col items-center justify-center gap-3 p-6 text-center">
+      <AlertCircle className="size-6 text-destructive" aria-hidden="true" />
+      <p role="alert" className="text-sm">
+        {message}
+      </p>
+      <Button asChild variant="outline" size="sm">
+        <Link to="/">
+          <ArrowLeft />
+          Back to your sites
+        </Link>
+      </Button>
+    </div>
   );
 }

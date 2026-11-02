@@ -2,17 +2,29 @@ import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
 import { ClerkProvider, SignedIn, SignedOut, SignIn } from "@clerk/clerk-react";
+import { dark } from "@clerk/themes";
+import { ThemeProvider, useTheme } from "@/lib/theme";
 import { App } from "./App";
 import { ApiBackendProvider, LocalBackendProvider } from "./backend-context";
+import { Brand } from "./components/Brand";
 import { CLERK_KEY, LOCAL_MODE } from "./env";
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import "./index.css";
 
 function Providers({ children }: { children: ReactNode }) {
+  const { resolvedTheme } = useTheme();
   if (LOCAL_MODE) return <LocalBackendProvider>{children}</LocalBackendProvider>;
   return (
-    <ClerkProvider publishableKey={CLERK_KEY}>
+    <ClerkProvider publishableKey={CLERK_KEY} appearance={{ baseTheme: resolvedTheme === "dark" ? dark : undefined }}>
       <SignedOut>
-        <div className="flex min-h-screen items-center justify-center">
+        <div className="flex min-h-dvh flex-col items-center justify-center gap-8 bg-muted/30 p-6">
+          <div className="text-center">
+            <Brand className="justify-center" />
+            <p className="mt-4 max-w-sm text-sm text-muted-foreground">
+              Free landing pages for non-profits and ministries. Sign in to start or continue a site.
+            </p>
+          </div>
           <SignIn routing="hash" />
         </div>
       </SignedOut>
@@ -29,9 +41,14 @@ if (!rootEl) throw new Error("Missing #root element.");
 createRoot(rootEl).render(
   <StrictMode>
     <BrowserRouter>
-      <Providers>
-        <App />
-      </Providers>
+      <ThemeProvider>
+        <TooltipProvider delayDuration={300}>
+          <Providers>
+            <App />
+          </Providers>
+          <Toaster position="bottom-right" richColors />
+        </TooltipProvider>
+      </ThemeProvider>
     </BrowserRouter>
   </StrictMode>,
 );

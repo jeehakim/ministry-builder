@@ -1,15 +1,21 @@
 import { UserButton } from "@clerk/clerk-react";
+import { HardDrive } from "lucide-react";
 import { LOCAL_MODE } from "../env";
+import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 export function UserMenu() {
   if (LOCAL_MODE) {
     return (
-      <span
-        className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600"
-        title="No Clerk key configured: your site is stored in this browser only."
-      >
-        Local mode
-      </span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant="secondary" className="gap-1 font-normal">
+            <HardDrive className="size-3" aria-hidden="true" />
+            Local mode
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">No sign-in configured. Your site is stored in this browser only.</TooltipContent>
+      </Tooltip>
     );
   }
   return <UserButton />;

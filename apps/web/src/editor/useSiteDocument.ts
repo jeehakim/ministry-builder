@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { SiteDocument, type Section, type SectionType } from "@ministry/schema";
 import type { SiteInfo } from "../api";
 import { useBackend } from "../backend-context";
-import { addSection, formatIssue, moveSection, removeSection, replaceSection, toggleHidden } from "./documentOps";
+import { addSection, formatIssue, moveSection, removeSection, reorderSection, replaceSection, toggleHidden } from "./documentOps";
 
 export type SaveState =
   | { kind: "saved" }
@@ -100,6 +100,7 @@ export function useSiteDocument(siteId: string) {
     update,
     addSection: useCallback((type: SectionType) => update((d) => addSection(d, type)), [update]),
     moveSection: useCallback((id: string, dir: -1 | 1) => update((d) => moveSection(d, id, dir)), [update]),
+    reorderSection: useCallback((id: string, overId: string) => update((d) => reorderSection(d, id, overId)), [update]),
     toggleHidden: useCallback((id: string) => update((d) => toggleHidden(d, id)), [update]),
     removeSection: useCallback((id: string) => update((d) => removeSection(d, id)), [update]),
     replaceSection: useCallback((section: Section) => update((d) => replaceSection(d, section)), [update]),

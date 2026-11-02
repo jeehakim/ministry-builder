@@ -31,6 +31,18 @@ export function moveSection(doc: SiteDocument, id: string, direction: -1 | 1): S
   return { ...doc, sections };
 }
 
+/** Moves the section `id` to the position currently held by `overId`. Returns `doc` itself if nothing changes. */
+export function reorderSection(doc: SiteDocument, id: string, overId: string): SiteDocument {
+  const from = doc.sections.findIndex((s) => s.id === id);
+  const to = doc.sections.findIndex((s) => s.id === overId);
+  if (from < 0 || to < 0 || from === to) return doc;
+  const sections = [...doc.sections];
+  const [moved] = sections.splice(from, 1);
+  if (!moved) return doc;
+  sections.splice(to, 0, moved);
+  return { ...doc, sections };
+}
+
 export function toggleHidden(doc: SiteDocument, id: string): SiteDocument {
   return {
     ...doc,

@@ -2,16 +2,27 @@ import type { Meta, SiteDocument, Theme } from "@ministry/schema";
 import { templates } from "@ministry/templates";
 import { ColorField, SelectField, TextField } from "../components/Field";
 import { ImageField } from "../components/ImageField";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { FONT_PAIRS, findFontPair } from "./fontPairs";
 
-const HERO_STYLES: Theme["heroStyle"][] = ["image", "solid", "split"];
-const RADII: Theme["radius"][] = ["none", "small", "large"];
+const HERO_STYLES: { value: Theme["heroStyle"]; label: string }[] = [
+  { value: "image", label: "Photo" },
+  { value: "solid", label: "Solid" },
+  { value: "split", label: "Split" },
+];
+const RADII: { value: Theme["radius"]; label: string }[] = [
+  { value: "none", label: "Square" },
+  { value: "small", label: "Soft" },
+  { value: "large", label: "Round" },
+];
 
 function isHeroStyle(v: string): v is Theme["heroStyle"] {
-  return HERO_STYLES.some((s) => s === v);
+  return HERO_STYLES.some((s) => s.value === v);
 }
 function isRadius(v: string): v is Theme["radius"] {
-  return RADII.some((s) => s === v);
+  return RADII.some((s) => s.value === v);
 }
 
 export function SiteForm({ doc, update }: { doc: SiteDocument; update: (fn: (d: SiteDocument) => SiteDocument) => void }) {
@@ -27,14 +38,17 @@ export function SiteForm({ doc, update }: { doc: SiteDocument; update: (fn: (d: 
 
   return (
     <div className="space-y-6">
-      <section aria-labelledby="site-details" className="space-y-3">
-        <h2 id="site-details" className="text-sm font-semibold text-slate-900">
-          Organization
-        </h2>
+      <section aria-labelledby="site-details" className="space-y-4">
+        <div>
+          <h2 id="site-details" className="text-sm font-semibold">
+            Organization
+          </h2>
+          <p className="text-xs text-muted-foreground">Shown in the header, page title, and search results.</p>
+        </div>
         <TextField label="Name" value={meta.orgName} onChange={(orgName) => setMeta({ orgName })} />
         <TextField label="Tagline" value={meta.tagline} onChange={(tagline) => setMeta({ tagline })} />
         <TextField
-          label="Description (for search engines)"
+          label="Description for search engines"
           multiline
           value={meta.description}
           onChange={(description) => setMeta({ description })}
@@ -51,16 +65,16 @@ export function SiteForm({ doc, update }: { doc: SiteDocument; update: (fn: (d: 
         </div>
       </section>
 
-      <section aria-labelledby="site-theme" className="space-y-3">
-        <h2 id="site-theme" className="text-sm font-semibold text-slate-900">
-          Design
-        </h2>
-        <SelectField
-          label="Template"
-          value={theme.templateId}
-          options={templateOptions}
-          onChange={(templateId) => setTheme({ templateId })}
-        />
+      <Separator />
+
+      <section aria-labelledby="site-theme" className="space-y-4">
+        <div>
+          <h2 id="site-theme" className="text-sm font-semibold">
+            Design
+          </h2>
+          <p className="text-xs text-muted-foreground">Changes show in the preview right away.</p>
+        </div>
+        <SelectField label="Template" value={theme.templateId} options={templateOptions} onChange={(templateId) => setTheme({ templateId })} />
         <div className="grid grid-cols-2 gap-3">
           <ColorField label="Primary" value={theme.primary} onChange={(primary) => setTheme({ primary })} />
           <ColorField label="Accent" value={theme.accent} onChange={(accent) => setTheme({ accent })} />
@@ -79,23 +93,43 @@ export function SiteForm({ doc, update }: { doc: SiteDocument; update: (fn: (d: 
             if (next) setTheme({ headingFont: next.headingFont, bodyFont: next.bodyFont });
           }}
         />
-        <div className="grid grid-cols-2 gap-3">
-          <SelectField
-            label="Hero style"
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Hero style</Label>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            className="w-full"
             value={theme.heroStyle}
-            options={HERO_STYLES.map((v) => ({ value: v, label: v }))}
-            onChange={(v) => {
+            onValueChange={(v) => {
               if (isHeroStyle(v)) setTheme({ heroStyle: v });
             }}
-          />
-          <SelectField
-            label="Corner radius"
+          >
+            {HERO_STYLES.map((o) => (
+              <ToggleGroupItem key={o.value} value={o.value} className="flex-1">
+                {o.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Corners</Label>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            className="w-full"
             value={theme.radius}
-            options={RADII.map((v) => ({ value: v, label: v }))}
-            onChange={(v) => {
+            onValueChange={(v) => {
               if (isRadius(v)) setTheme({ radius: v });
             }}
-          />
+          >
+            {RADII.map((o) => (
+              <ToggleGroupItem key={o.value} value={o.value} className="flex-1">
+                {o.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
         </div>
       </section>
     </div>

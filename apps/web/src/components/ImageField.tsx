@@ -1,9 +1,13 @@
-import { useId, useState } from "react";
+import { useId, useState, type DragEvent } from "react";
 import type { ImageRef } from "@ministry/schema";
+import { ImagePlus, Loader2, Trash2, Upload } from "lucide-react";
 import { useBackend } from "../backend-context";
 import { useSiteId } from "../editor/EditorContext";
 import { resizeToWebp } from "../lib/image";
-import { btnCls, inputCls, labelCls } from "./ui";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
 export function ImageField(props: {
   label: string;
@@ -15,9 +19,14 @@ export function ImageField(props: {
   const siteId = useSiteId();
   const inputId = useId();
   const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleFile(file: File) {
+    if (!file.type.startsWith("image/")) {
+      setError("Please choose an image file.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -31,52 +40,85 @@ export function ImageField(props: {
     }
   }
 
+  function onDrop(e: DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) void handleFile(file);
+  }
+
   return (
-    <div>
-      <span className={labelCls}>{label}</span>
-      <div className="flex items-start gap-3 rounded-md border border-dashed border-slate-300 p-2">
-        <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded bg-slate-100 text-[10px] text-slate-400">
-          {value ? <img src={backend.imageUrl(value)} alt="" className="h-full w-full object-cover" /> : "No image"}
-        </div>
-        <div className="min-w-0 flex-1 space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor={inputId} className={`${btnCls} cursor-pointer has-[:focus-visible]:outline-2`}>
-              {busy ? "Uploading..." : value ? "Replace" : "Choose image"}
-              <input
-                id={inputId}
-                type="file"
-                accept="image/*"
-                disabled={busy}
-                className="sr-only"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = "";
-                  if (file) void handleFile(file);
-                }}
+    <div className="space-y-1.5">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={onDrop}
+        className={cn(
+          "rounded-lg border border-dashed p-2 transition-colors",
+          dragging ? "border-brand bg-brand-soft" : "border-input",
+        )}
+      >
+        {value ? (
+          <div className="flex items-start gap-3">
+            <div className="relative size-16 shrink-0 overflow-hidden rounded-md bg-muted ring-1 ring-foreground/10">
+              <img src={backend.imageUrl(value)} alt="" className="size-full object-cover" />
+            </div>
+            <div className="min-w-0 flex-1 space-y-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Button asChild variant="outline" size="sm" disabled={busy}>
+                  <label htmlFor={inputId} className="cursor-pointer">
+                    {busy ? <Loader2 className="animate-spin" /> : <ImagePlus />}
+                    Replace
+                  </label>
+                </Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => onChange(undefined)}>
+                  <Trash2 />
+                  Remove
+                </Button>
+              </div>
+              <Input
+                aria-label={`${label} alt text`}
+                placeholder="Describe the image for screen readers"
+                value={value.alt}
+                onChange={(e) => onChange({ ...value, alt: e.target.value })}
               />
-            </label>
-            {value ? (
-              <button type="button" className={btnCls} onClick={() => onChange(undefined)}>
-                Remove
-              </button>
-            ) : null}
+            </div>
           </div>
-          {value ? (
-            <input
-              aria-label={`${label} alt text`}
-              className={inputCls}
-              placeholder="Alt text: describe the image"
-              value={value.alt}
-              onChange={(e) => onChange({ ...value, alt: e.target.value })}
-            />
-          ) : null}
-          {error ? (
-            <p role="alert" className="text-xs text-red-700">
-              {error}
-            </p>
-          ) : null}
-        </div>
+        ) : (
+          <label
+            htmlFor={inputId}
+            className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-md px-3 py-5 text-center text-sm text-muted-foreground hover:bg-muted/60"
+          >
+            {busy ? <Loader2 className="size-5 animate-spin" /> : <Upload className="size-5" />}
+            <span>
+              <span className="font-medium text-foreground">{busy ? "Uploading…" : "Choose an image"}</span>
+              {busy ? null : " or drop it here"}
+            </span>
+            <span className="text-xs">Resized to 1600px and converted to WebP in your browser</span>
+          </label>
+        )}
+        <input
+          id={inputId}
+          type="file"
+          accept="image/*"
+          disabled={busy}
+          className="sr-only"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) void handleFile(file);
+          }}
+        />
       </div>
+      {error ? (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -58,3 +58,13 @@ test("formatIssue reports the first Zod issue with its path", () => {
   assert.equal(result.success, false);
   if (!result.success) assert.match(formatIssue(result.error), /^meta\.orgName: /);
 });
+
+test("reorderSection moves a section to the target position and ignores unknown ids", async () => {
+  const { reorderSection } = await import("./documentOps.ts");
+  const doc = emptySiteDocument();
+  const [first, second, third] = ids(doc);
+  const moved = reorderSection(doc, first!, third!);
+  assert.deepEqual(ids(moved).slice(0, 3), [second, third, first]);
+  assert.equal(reorderSection(doc, first!, "nope"), doc);
+  assert.equal(reorderSection(doc, first!, first!), doc);
+});
