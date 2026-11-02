@@ -1,6 +1,7 @@
 import type { Section, SiteDocument } from "@ministry/schema";
 import type { RenderOptions } from "../types";
 import { ContactForm } from "../ContactForm";
+import { CampaignCards, campaignsFor } from "../campaign";
 import { paragraphs } from "../util";
 import { LanguageSwitcher } from "../LanguageSwitcher";
 
@@ -206,7 +207,7 @@ function SectionView({
     case "give":
       return (
         <section className="section give" id={s.id} {...attrs}>
-          <div className="wrap">
+          <div className={`wrap${campaignsFor(s, options).length ? " has-campaigns" : ""}`}>
             <div className="give-card">
               <h2>{s.heading}</h2>
               {paragraphs(s.body).map((p, i) => <p key={i}>{p}</p>)}
@@ -218,6 +219,7 @@ function SectionView({
                 </div>
               ) : null}
             </div>
+            <CampaignCards section={s} options={options} />
           </div>
         </section>
       );

@@ -28,6 +28,12 @@ export function draftOutputSchema(variations: number) {
 export const RewriteOutput = z.object({ text: z.string().trim().min(1).max(8000) });
 export const ThemeOutput = z.object({ theme: Theme, rationale: z.string().trim().max(600).default("") });
 export const AltOutput = z.object({ alt: z.string().trim().min(1).max(200) });
+export const CampaignStoryOutput = z.object({
+  title: z.string().trim().min(1).max(120),
+  summary: z.string().trim().max(300).default(""),
+  story: z.string().trim().min(1).max(8000),
+});
+export const ThankYouOutput = z.object({ message: z.string().trim().min(1).max(2000) });
 
 /**
  * A model-written overlay, checked against the text that was sent: same sections, same array

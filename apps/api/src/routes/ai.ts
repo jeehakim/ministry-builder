@@ -36,7 +36,7 @@ const MAX_AI_BODY_BYTES = 32 * 1024;
 const tooLarge = bodyLimit({ maxSize: MAX_AI_BODY_BYTES, onError: (c) => c.json({ error: "Body too large" }, 413) });
 
 type Ctx = Context<AppEnv>;
-type Guard = { site: Site; provider: AiProvider; orgName: string };
+export type Guard = { site: Site; provider: AiProvider; orgName: string };
 
 function templateChoices(): TemplateChoice[] {
   return Object.values(templates).map(({ id, name, description }) => ({ id, name, description }));
@@ -55,7 +55,7 @@ function knownTemplateId(id: string): string {
   return templateChoices()[0]?.id ?? "classic";
 }
 
-async function parseBody<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.output<S> | Response> {
+export async function parseBody<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.output<S> | Response> {
   const body: unknown = await c.req.json().catch(() => undefined);
   if (body === undefined) return c.json({ error: "Body must be valid JSON" }, 400);
   const parsed = schema.safeParse(body);
@@ -67,7 +67,7 @@ async function parseBody<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.o
  * Everything that must hold before a model call: site access, a configured provider and quota.
  * Returns the loaded pieces or the Response to send.
  */
-async function guard(c: Ctx): Promise<Guard | Response> {
+export async function guard(c: Ctx): Promise<Guard | Response> {
   const db = drizzle(c.env.DB);
   const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id") ?? "");
   if (!site) return c.json({ error: "Site not found" }, 404);
@@ -105,7 +105,7 @@ function audit(value: unknown): string | null {
   return json.length > AUDIT_MAX_CHARS ? `${json.slice(0, AUDIT_MAX_CHARS)}…` : json;
 }
 
-function usageRow(
+export function usageRow(
   userId: string,
   siteId: string,
   action: AiAction,
@@ -127,7 +127,7 @@ function usageRow(
 }
 
 /** Runs a provider call, logging tokens and latency; maps any failure to a 502 Response. */
-async function callProvider<T extends { usage: AiCallUsage }>(
+export async function callProvider<T extends { usage: AiCallUsage }>(
   c: Ctx,
   action: AiAction,
   call: () => Promise<T>,
@@ -308,7 +308,7 @@ aiRoutes.post("/sites/:id/ai/alt-text", tooLarge, async (c) => {
   return c.json(response);
 });
 
-async function currentDocument(db: ReturnType<typeof drizzle>, site: Site): Promise<SiteDocument | null> {
+export async function currentDocument(db: ReturnType<typeof drizzle>, site: Site): Promise<SiteDocument | null> {
   if (!site.currentVersionId) return null;
   const [version] = await db
     .select({ document: siteVersions.document })

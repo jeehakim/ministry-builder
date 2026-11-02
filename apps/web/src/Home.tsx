@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate } from "react-router";
-import { ArrowRight, Globe, Loader2, MoreHorizontal, Plus, Settings, Trash2 } from "lucide-react";
+import { ArrowRight, Globe, HeartHandshake, Loader2, MoreHorizontal, Plus, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,13 +11,11 @@ import type { SiteSummary } from "./api";
 import { LOCAL_SITE_ID } from "./backend";
 import { useBackend } from "./backend-context";
 import { ApiUnreachableBanner } from "./components/ApiUnreachableBanner";
-import { Brand } from "./components/Brand";
+import { AppShell } from "./components/AppShell";
 import { DeleteSiteDialog } from "./components/DeleteSiteDialog";
-import { HelpMenu } from "./components/HelpMenu";
 import { isNetworkError } from "./lib/errors";
-import { ThemeToggle } from "./components/ThemeToggle";
+import { useDashboardOrg } from "./lib/useDashboardOrg";
 import { PublishedBadge } from "./components/PublishedBadge";
-import { UserMenu } from "./components/UserMenu";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -46,6 +44,9 @@ export function Home() {
   const [pendingDelete, setPendingDelete] = useState<SiteSummary | null>(null);
   // Bumped by the banner's retry button to load the list again.
   const [attempt, setAttempt] = useState(0);
+  const { orgs, orgId, org, setOrgId } = useDashboardOrg(state.kind === "ready" ? state.sites : null);
+  // With several organizations the list shows the chosen one; with one (or none) there is nothing to filter.
+  const visibleSites = state.kind === "ready" ? (orgs.length > 1 && orgId ? state.sites.filter((s) => s.orgId === orgId) : state.sites) : [];
 
   useEffect(() => {
     let cancelled = false;
@@ -88,22 +89,10 @@ export function Home() {
   }
 
   return (
-    <div className="min-h-dvh bg-muted/30">
-      <header className="border-b bg-background">
-        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
-          <Brand />
-          <div className="flex items-center gap-1">
-            <HelpMenu />
-            <ThemeToggle />
-            <UserMenu />
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-5xl px-4 py-10">
+    <AppShell area="sites" orgs={orgs} orgId={orgId} onOrgChange={setOrgId}>
         <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Your sites</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{org && orgs.length > 1 ? `${org.name}: sites` : "Your sites"}</h1>
             <p className="mt-1 text-sm text-muted-foreground">A landing page for every organization you help.</p>
           </div>
           <Button onClick={() => setOpen(true)} disabled={state.kind === "loading"}>
@@ -128,7 +117,7 @@ export function Home() {
           </p>
         ) : null}
 
-        {state.kind === "ready" && state.sites.length === 0 ? (
+        {state.kind === "ready" && visibleSites.length === 0 ? (
           <Empty className="border bg-background py-16">
             <EmptyHeader>
               <EmptyMedia variant="icon">
@@ -144,9 +133,9 @@ export function Home() {
           </Empty>
         ) : null}
 
-        {state.kind === "ready" && state.sites.length > 0 ? (
+        {state.kind === "ready" && visibleSites.length > 0 ? (
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {state.sites.map((s) => (
+            {visibleSites.map((s) => (
               <li key={s.id}>
                 <Card className="group h-full transition-shadow hover:shadow-md">
                   <CardContent className="flex h-full flex-col justify-between gap-6">
@@ -172,6 +161,14 @@ export function Home() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              {backend.fundraising ? (
+                                <DropdownMenuItem asChild>
+                                  <Link to={`/fundraising?org=${encodeURIComponent(s.orgId)}`}>
+                                    <HeartHandshake />
+                                    Fundraising
+                                  </Link>
+                                </DropdownMenuItem>
+                              ) : null}
                               {backend.integrations ? (
                                 <DropdownMenuItem asChild>
                                   <Link to={`/sites/${encodeURIComponent(s.id)}/settings`}>
@@ -204,7 +201,6 @@ export function Home() {
             ))}
           </ul>
         ) : null}
-      </main>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-md">
@@ -250,6 +246,6 @@ export function Home() {
           setPendingDelete(null);
         }}
       />
-    </div>
+    </AppShell>
   );
 }

@@ -2,6 +2,9 @@ import { Link, Route, Routes } from "react-router";
 import { Compass } from "lucide-react";
 import { Home } from "./Home";
 import { EditorPage } from "./editor/EditorPage";
+import { CampaignPage } from "./fundraising/CampaignPage";
+import { FundraisingPage } from "./fundraising/FundraisingPage";
+import { FundraisingGuide } from "./guides/FundraisingGuide";
 import { AiGuide } from "./guides/AiGuide";
 import { DomainsGuide } from "./guides/DomainsGuide";
 import { EmailGuide } from "./guides/EmailGuide";
@@ -16,6 +19,9 @@ export function App() {
       <Route path="/" element={<Home />} />
       <Route path="/sites/:id" element={<EditorPage />} />
       <Route path="/sites/:id/settings" element={<SettingsPage />} />
+      <Route path="/fundraising" element={<FundraisingPage />} />
+      <Route path="/sites/:id/fundraising/:cid" element={<CampaignPage />} />
+      <Route path="/guide/fundraising" element={<FundraisingGuide />} />
       <Route path="/guide/ai" element={<AiGuide />} />
       <Route path="/guide/publish" element={<PublishGuide />} />
       <Route path="/guide/domains" element={<DomainsGuide />} />

@@ -17,25 +17,29 @@ export function buildRobotsTxt(baseUrl: string): string {
 }
 
 /**
- * sitemap.xml with the primary page and every language page. Each entry lists all language versions
- * as `xhtml:link` alternates (plus x-default for the primary page) when the site has more than one.
- * `baseUrl` is the absolute site root with a trailing slash; `languages` lists the primary first.
+ * sitemap.xml with the primary page and every language page, plus the same set for each extra path
+ * (campaign pages such as "give/winter-shelter/", relative to a language root). Each entry lists all
+ * language versions as `xhtml:link` alternates (plus x-default for the primary page) when the site has
+ * more than one. `baseUrl` is the absolute site root with a trailing slash; `languages` lists the primary first.
  */
-export function buildSitemapXml(baseUrl: string, languages: string[]): string {
+export function buildSitemapXml(baseUrl: string, languages: string[], extraPaths: string[] = []): string {
   const primary = languages[0] ?? "";
-  const alternates =
-    languages.length > 1
-      ? [
-          ...languages.map((lang) => ({ hreflang: lang, href: languagePageUrl(baseUrl, primary, lang) })),
-          { hreflang: "x-default", href: baseUrl },
-        ]
-      : [];
-  const entries = languages.map((lang) => {
-    const lines = [`    <loc>${escapeXml(languagePageUrl(baseUrl, primary, lang))}</loc>`];
-    for (const alt of alternates) {
-      lines.push(`    <xhtml:link rel="alternate" hreflang="${escapeXml(alt.hreflang)}" href="${escapeXml(alt.href)}"/>`);
-    }
-    return `  <url>\n${lines.join("\n")}\n  </url>`;
+  const entries = ["", ...extraPaths].flatMap((path) => {
+    const pageUrl = (lang: string) => `${languagePageUrl(baseUrl, primary, lang)}${path}`;
+    const alternates =
+      languages.length > 1
+        ? [
+            ...languages.map((lang) => ({ hreflang: lang, href: pageUrl(lang) })),
+            { hreflang: "x-default", href: pageUrl(primary) },
+          ]
+        : [];
+    return languages.map((lang) => {
+      const lines = [`    <loc>${escapeXml(pageUrl(lang))}</loc>`];
+      for (const alt of alternates) {
+        lines.push(`    <xhtml:link rel="alternate" hreflang="${escapeXml(alt.hreflang)}" href="${escapeXml(alt.href)}"/>`);
+      }
+      return `  <url>\n${lines.join("\n")}\n  </url>`;
+    });
   });
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">

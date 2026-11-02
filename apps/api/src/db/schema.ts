@@ -249,8 +249,108 @@ export const integrationEvents = sqliteTable(
   (t) => [index("integration_events_org_id_kind_created_at_idx").on(t.orgId, t.kind, t.createdAt)],
 );
 
+/**
+ * A fundraising campaign of a site (platform design, section 3, phase A). Published at
+ * `<site>/give/<slug>/` in every site language; gifts are recorded by staff, never processed here.
+ * Money columns are integers in the currency's minor unit.
+ */
+export const campaigns = sqliteTable(
+  "campaigns",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id),
+    slug: text("slug").notNull(),
+    title: text("title").notNull(),
+    summary: text("summary").notNull().default(""),
+    story: text("story").notNull().default(""),
+    goalAmount: integer("goal_amount").notNull().default(0),
+    currency: text("currency").notNull().default("USD"),
+    /** ISO date (YYYY-MM-DD) or null. */
+    deadline: text("deadline"),
+    /** JSON-encoded ImageRef or null. */
+    coverImageJson: text("cover_image_json"),
+    /** JSON array of minor-unit integers. */
+    suggestedAmountsJson: text("suggested_amounts_json").notNull().default("[]"),
+    giveUrl: text("give_url").notNull().default(""),
+    giveLabel: text("give_label").notNull().default(""),
+    donorWallEnabled: integer("donor_wall_enabled", { mode: "boolean" }).notNull().default(false),
+    thankYouMessage: text("thank_you_message").notNull().default(""),
+    status: text("status", { enum: ["draft", "active", "closed"] })
+      .notNull()
+      .default("draft"),
+    /** JSON object of translation overlays keyed by language code. */
+    translationsJson: text("translations_json").notNull().default("{}"),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [uniqueIndex("campaigns_site_id_slug_unique").on(t.siteId, t.slug), index("campaigns_org_id_idx").on(t.orgId)],
+);
+
+/** A person who gave, deduplicated by email within an organization (the seed of the People module). */
+export const donors = sqliteTable(
+  "donors",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    name: text("name").notNull().default(""),
+    /** Lowercase. */
+    email: text("email").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("donors_org_id_email_unique").on(t.orgId, t.email)],
+);
+
+/**
+ * One recorded gift. `external` came through the organization's processor (recorded by hand or CSV),
+ * `offline` was cash or a check. The platform never moves money, so there is no payment reference here.
+ */
+export const gifts = sqliteTable(
+  "gifts",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id),
+    donorId: text("donor_id").references(() => donors.id),
+    amountCents: integer("amount_cents").notNull(),
+    currency: text("currency").notNull(),
+    source: text("source", { enum: ["external", "offline"] }).notNull(),
+    donorName: text("donor_name").notNull().default(""),
+    donorEmail: text("donor_email").notNull().default(""),
+    /** The donor agreed to be named on the donor wall. */
+    public: integer("public", { mode: "boolean" }).notNull().default(false),
+    note: text("note").notNull().default(""),
+    receivedAt: integer("received_at", { mode: "timestamp_ms" }).notNull(),
+    recordedBy: text("recorded_by")
+      .notNull()
+      .references(() => users.id),
+    /** Set when the thank-you email was accepted by the sender; null when none was attempted. */
+    thankYouSentAt: integer("thank_you_sent_at", { mode: "timestamp_ms" }),
+    thankYouError: text("thank_you_error"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("gifts_campaign_id_received_at_idx").on(t.campaignId, t.receivedAt), index("gifts_org_id_idx").on(t.orgId), index("gifts_donor_id_idx").on(t.donorId)],
+);
+
 export type User = typeof users.$inferSelect;
 export type Site = typeof sites.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
 export type Domain = typeof domains.$inferSelect;
 export type OrgIntegration = typeof orgIntegrations.$inferSelect;
+export type CampaignRow = typeof campaigns.$inferSelect;
+export type GiftRow = typeof gifts.$inferSelect;

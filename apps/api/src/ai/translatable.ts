@@ -6,7 +6,7 @@ import type { SiteDocument, TranslationOverlay } from "@ministry/schema";
  * numbers, form endpoints) are never included, so they can neither be sent to the model
  * nor be changed by what comes back.
  */
-const SKIP_KEYS = new Set(["id", "type", "hidden", "image", "photo", "logo", "href", "email", "phone", "formEndpoint"]);
+const SKIP_KEYS = new Set(["id", "type", "hidden", "image", "photo", "logo", "href", "email", "phone", "formEndpoint", "campaigns"]);
 
 export type TranslatableText = {
   meta: { tagline?: string; description?: string };

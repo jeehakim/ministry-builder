@@ -31,6 +31,7 @@ import { MessagesDialog } from "./MessagesDialog";
 import { editSection, formatIssue, setTranslation } from "./documentOps";
 import { EditorHeader } from "./EditorHeader";
 import { SiteIdProvider } from "./EditorContext";
+import { GiveCampaignsPanel } from "./GiveCampaignsPanel";
 import { FieldsForm } from "./FieldsForm";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { SECTION_FIELDS, SECTION_LABELS, type Obj } from "./fields";
@@ -251,6 +252,15 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
                         translating={translating}
                         onChange={(next: Obj) => editor.update((d) => editSection(d, lang, next as Section))}
                       />
+                      {selected.type === "give" ? (
+                        <div className="mt-4">
+                          <GiveCampaignsPanel
+                            section={selected}
+                            orgId={site.orgId}
+                            onChange={(campaigns) => editor.update((d) => editSection(d, doc.meta.language, { ...(d.sections.find((s) => s.id === selected.id) as Section), campaigns } as Section))}
+                          />
+                        </div>
+                      ) : null}
                     </section>
                   ) : null}
                 </div>

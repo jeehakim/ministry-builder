@@ -1,6 +1,7 @@
 import type { Section, SiteDocument } from "@ministry/schema";
 import type { RenderOptions } from "../types";
 import { ContactForm } from "../ContactForm";
+import { CampaignCards } from "../campaign";
 import { paragraphs } from "../util";
 import { LanguageSwitcher } from "../LanguageSwitcher";
 
@@ -213,6 +214,7 @@ function SectionView({
                 ))}
               </div>
             ) : null}
+            <CampaignCards section={s} options={options} />
           </div>
         </section>
       );

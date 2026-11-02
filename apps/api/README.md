@@ -51,7 +51,7 @@ Set `vars.ALLOWED_ORIGIN` to `https://build.shofar.io` for production and uncomm
 | `POST /sites/:id/ai/theme` | owner or admin | `AiThemeRequest` -> `{ theme, rationale }` |
 | `POST /sites/:id/ai/alt-text` | owner or admin | `{ assetKey }` (must be under `sites/<id>/`) -> `{ alt }` |
 | `POST /sites/:id/ai/translate` | owner or admin | `AiTranslateRequest` -> `{ language, overlay }`; 400 for the primary language; saves the overlay into `translations[language]`, adds the language to `meta.languages` and moves the current version |
-| `POST /sites/:id/publish` | owner or admin | Renders the current version into the `PUBLISHED` bucket (pages, thank-you pages, `robots.txt`, `sitemap.xml`); returns `{ url, publishedAt }`. 429 with `Retry-After` past `MAX_PUBLISHES_PER_HOUR` |
+| `POST /sites/:id/publish` | owner or admin | Renders the current version into the `PUBLISHED` bucket (pages, thank-you pages, a page per active campaign at `give/<slug>/` in every language with cards in the Give section, `robots.txt`, `sitemap.xml`); returns `{ url, publishedAt }`. 429 with `Retry-After` past `MAX_PUBLISHES_PER_HOUR` |
 | `POST /sites/:id/unpublish` | owner or admin | Removes the published objects; site returns to `draft` |
 | `GET /sites/:id/domains` | owner or admin | `{ domains, cnameTarget, enabled }`; each domain has `hostname`, `kind`, `sslStatus`, `verifiedAt`, `active` and the `dns` record to create |
 | `POST /sites/:id/domains` | owner or admin | `{ hostname, kind?: "primary" \| "redirect" }`; creates a Cloudflare for SaaS custom hostname and returns `{ domain }` (201). 400 bad hostname, 409 taken or second primary, 502 Cloudflare error, 503 not configured |
@@ -64,12 +64,23 @@ Set `vars.ALLOWED_ORIGIN` to `https://build.shofar.io` for production and uncomm
 | `PUT /orgs/:id/integrations/resend/from` | org owner or admin | `{ fromAddress, fromName? }`; the address's domain must be verified in the organization's Resend account (the list is refreshed first). 400 otherwise, 409 without a key |
 | `POST /orgs/:id/integrations/resend/test` | org owner or admin | `{ to }`; sends a short test email through the organization's key and address. Sets `testedAt`, or `lastError` and answers 502. 429 past 5 per hour, 409 without key or address |
 | `DELETE /orgs/:id/integrations/resend` | org owner or admin | Removes the stored key and settings; contact email goes back to the platform sender |
+| `GET /sites/:id/campaigns` | owner or admin | `{ campaigns: CampaignWithTotals[] }` (newest first; totals from the gifts table) |
+| `GET /orgs/:id/campaigns` | org owner or admin | Every campaign of the organization across its sites, each with `siteSlug`, plus `sites: [{ id, slug, published }]` |
+| `POST /sites/:id/campaigns` | owner or admin | `CampaignInput`; the slug derives from the title when omitted (suffix on a clash; 409 for an explicit taken slug). 400 for a cover image that is not this site's upload or a translation language the site lacks. Returns `{ campaign }` (201) |
+| `GET` / `PUT` / `DELETE /sites/:id/campaigns/:cid` | owner or admin | Read, replace (`CampaignInput`; the slug cannot change) or delete (with its gifts) one campaign |
+| `GET /sites/:id/campaigns/:cid/totals` | owner or admin | `{ raisedAmount, giftCount, goalAmount, currency, percent }`, minor units |
+| `GET /sites/:id/campaigns/:cid/gifts?limit=200` | owner or admin | `{ gifts, totals }`, newest first (limit 1-2000) |
+| `POST /sites/:id/campaigns/:cid/gifts` | owner or admin | `GiftInput`; dedupes the donor by email per organization and, with an email and a configured sender, emails the campaign's thank-you note (outcome on `thankYouSentAt` / `thankYouError`, never a failure). Returns `{ gift, totals }` (201) |
+| `DELETE /sites/:id/campaigns/:cid/gifts/:gid` | owner or admin | `{ ok, totals }` |
+| `POST /sites/:id/campaigns/:cid/gifts/import` | owner or admin | `{ csv }` or a `text/csv` body with columns `amount` (required), `name`, `email`, `date`, `source`, `public`, `note`; at most 2000 rows. All rows are validated first: 400 `{ imported: 0, errors: [{ row, message }], totals }` imports nothing. No thank-you emails |
+| `POST /sites/:id/campaigns/:cid/ai/story` | owner or admin | `AiCampaignStoryRequest` -> `{ title, summary, story }` (counts against the AI quota) |
+| `POST /sites/:id/campaigns/:cid/ai/thank-you` | owner or admin | `AiThankYouRequest` -> `{ message }` with a `{{name}}` placeholder |
 | `GET /admin/sites` | admin | Every site with org name, owner, status and published URL |
 | `POST /orgs/:id/transfer` | admin | `{ email }`; looks the user up in Clerk and makes them the org owner |
 
 AI routes answer 429 `{ error, used, limit, resetsAt }` over quota, 503 when no provider is configured, 502 on provider failure.
 
-Published sites are served by this Worker before CORS and auth run, from the `PUBLISHED` bucket only. A request host is resolved in this order: a customer domain from the `domains` table (a `primary` domain serves the site at `/`, its language pages at `/<lang>/`, the thank-you pages at `/thanks/` and `/<lang>/thanks/`, and takes contact-form posts at `/contact`; a `redirect` domain answers 301 to the primary), then `PUBLIC_SITES_HOST` (`sites.shofar.io/<slug>/`) and its subdomain form (`<slug>.sites.shofar.io/`). `PUBLIC_API_HOST` is never looked up as a customer domain. Published pages contain only document-relative links (`relativizeRootLinks` in `src/published.ts` enforces it), so the same `index.html` works at `/` and at `/<slug>/`.
+Published sites are served by this Worker before CORS and auth run, from the `PUBLISHED` bucket only. A request host is resolved in this order: a customer domain from the `domains` table (a `primary` domain serves the site at `/`, its language pages at `/<lang>/`, the thank-you pages at `/thanks/` and `/<lang>/thanks/`, campaign pages at `/give/<campaign>/` and `/<lang>/give/<campaign>/`, and takes contact-form posts at `/contact`; a `redirect` domain answers 301 to the primary), then `PUBLIC_SITES_HOST` (`sites.shofar.io/<slug>/`) and its subdomain form (`<slug>.sites.shofar.io/`). `PUBLIC_API_HOST` is never looked up as a customer domain. Published pages contain only document-relative links (`relativizeRootLinks` in `src/published.ts` enforces it), so the same `index.html` works at `/` and at `/<slug>/`.
 
 ### Contact form
 

@@ -149,6 +149,11 @@ export const GiveSection = z.object({
   body: z.string().default(""),
   /** External giving links only (Zeffy, Givebutter, PayPal, Tithe.ly...). We never process payments. */
   links: z.array(Link).default([]),
+  /**
+   * Ids of the fundraising campaigns shown as cards in this section. Empty means every active
+   * campaign of the site. Cards are filled in at publish time from the campaigns table.
+   */
+  campaigns: z.array(z.string()).default([]),
 });
 
 export const ContactSection = z.object({

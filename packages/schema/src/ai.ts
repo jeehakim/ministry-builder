@@ -7,7 +7,7 @@ import { SiteDocument, Theme, TranslationOverlay } from "./site.ts";
  * this file; never redefine the shapes locally.
  */
 
-export const AI_ACTIONS = ["draft", "rewrite", "theme", "alt_text", "translate"] as const;
+export const AI_ACTIONS = ["draft", "rewrite", "theme", "alt_text", "translate", "campaign_story", "thank_you"] as const;
 export type AiAction = (typeof AI_ACTIONS)[number];
 
 /** Preset instructions the editor offers on text fields; custom text is also allowed. */
