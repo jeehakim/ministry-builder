@@ -14,6 +14,9 @@ export default defineConfig(async () => {
             AI_PROVIDER: "fake",
             AI_DAILY_LIMIT: "4",
             STAFF_API_TOKEN: "test-staff-token",
+            // Custom domains: the Cloudflare API is stubbed in test/domains.test.ts.
+            CLOUDFLARE_API_TOKEN: "test-cf-token",
+            CLOUDFLARE_ZONE_ID: "zone-test",
           },
         },
       }),

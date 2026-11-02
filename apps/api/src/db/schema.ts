@@ -116,6 +116,35 @@ export const aiUsage = sqliteTable(
   (t) => [index("ai_usage_user_id_created_at_idx").on(t.userId, t.createdAt)],
 );
 
+/**
+ * Customer domains attached to a hosted site (Cloudflare for SaaS custom hostnames).
+ * One `primary` serves the site at `/`; any `redirect` answers 301 to the primary.
+ */
+export const domains = sqliteTable(
+  "domains",
+  {
+    id: text("id").primaryKey(),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id),
+    /** Lowercase, no trailing dot. Unique across every site. */
+    hostname: text("hostname").notNull(),
+    kind: text("kind", { enum: ["primary", "redirect"] }).notNull(),
+    /** Id of the custom hostname in the shofar.io zone, null while the Cloudflare call has not succeeded. */
+    cfCustomHostnameId: text("cf_custom_hostname_id"),
+    /** Cloudflare's certificate status: pending_validation, pending_issuance, pending_deployment, active, ... */
+    sslStatus: text("ssl_status").notNull().default("pending"),
+    /** Set once Cloudflare reports the hostname as active (the customer's CNAME points at us). */
+    verifiedAt: integer("verified_at", { mode: "timestamp_ms" }),
+    createdAt: createdAt(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [uniqueIndex("domains_hostname_unique").on(t.hostname), index("domains_site_id_idx").on(t.siteId)],
+);
+
 export type User = typeof users.$inferSelect;
 export type Site = typeof sites.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
+export type Domain = typeof domains.$inferSelect;

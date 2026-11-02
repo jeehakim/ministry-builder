@@ -1,8 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
+import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
 import { publishedImagePrefix, publishedIndexKey } from "./published";
-import { sites } from "./db/schema";
+import { domains, sites } from "./db/schema";
 import { SLUG_PATTERN } from "./routes/sites";
 import type { AppEnv } from "./types";
 
@@ -45,25 +46,96 @@ function isSitesHost(hostname: string, sitesHost: string): boolean {
   return hostname === sitesHost || hostname.endsWith(`.${sitesHost}`);
 }
 
+function methodNotAllowed(): Response {
+  return new Response("Method not allowed", {
+    status: 405,
+    headers: { Allow: "GET, HEAD", "X-Content-Type-Options": "nosniff" },
+  });
+}
+
+/** Streams one object of a published site: its index at "/" or an image under "/images/". */
+async function serveSiteFile(c: Context<AppEnv>, siteId: string, rest: string): Promise<Response> {
+  let key: string;
+  let cacheControl: string;
+  if (rest === "/") {
+    key = publishedIndexKey(siteId);
+    cacheControl = "public, max-age=60";
+  } else if (rest.startsWith("/images/") && IMAGE_FILE_PATTERN.test(rest.slice("/images/".length))) {
+    key = `${publishedImagePrefix(siteId)}${rest.slice("/images/".length)}`;
+    cacheControl = "public, max-age=31536000, immutable";
+  } else {
+    return notFoundPage();
+  }
+
+  const object = await c.env.PUBLISHED.get(key, { onlyIf: c.req.raw.headers });
+  if (!object) return notFoundPage();
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  if (rest === "/") headers.set("Content-Type", "text/html; charset=utf-8");
+  headers.set("ETag", object.httpEtag);
+  headers.set("Cache-Control", cacheControl);
+  headers.set("X-Content-Type-Options", "nosniff");
+
+  // With `onlyIf`, R2 returns an object without a body when the precondition (If-None-Match) fails.
+  if (!("body" in object)) return new Response(null, { status: 304, headers });
+  return new Response(object.body, { headers });
+}
+
+/**
+ * A customer domain attached through Cloudflare for SaaS. The primary domain serves the site at "/";
+ * a redirect domain answers 301 to the primary (or to the site's sites-host address when there is none).
+ */
+async function serveCustomDomain(c: Context<AppEnv>, url: URL, hostname: string): Promise<Response | null> {
+  const db = drizzle(c.env.DB);
+  const [match] = await db
+    .select({ siteId: domains.siteId, kind: domains.kind, slug: sites.slug, status: sites.status })
+    .from(domains)
+    .innerJoin(sites, eq(domains.siteId, sites.id))
+    .where(eq(domains.hostname, hostname))
+    .limit(1);
+  if (!match) return null;
+
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") return methodNotAllowed();
+  if (match.status !== "published") return notFoundPage();
+
+  if (match.kind === "redirect") {
+    const [primary] = await db
+      .select({ hostname: domains.hostname })
+      .from(domains)
+      .where(and(eq(domains.siteId, match.siteId), eq(domains.kind, "primary")))
+      .limit(1);
+    const location = primary
+      ? `https://${primary.hostname}${url.pathname}${url.search}`
+      : `https://${c.env.PUBLIC_SITES_HOST}/${match.slug}/`;
+    return redirect(301, location);
+  }
+  return serveSiteFile(c, match.siteId, url.pathname);
+}
+
 /**
  * Serves published sites from the PUBLISHED bucket (never from IMAGES). Runs before CORS and
- * auth: requests for the sites host never reach the API routes.
+ * auth: requests for the sites host and for customer domains never reach the API routes.
  *
- * Host form:      sites.shofar.io/<slug>/ and /<slug>/images/<file>
- * Subdomain form: <slug>.sites.shofar.io/ and /images/<file>
+ * Customer domain: bridgeworldfoundation.org/ and /images/<file>
+ * Host form:       sites.shofar.io/<slug>/ and /<slug>/images/<file>
+ * Subdomain form:  <slug>.sites.shofar.io/ and /images/<file>
  */
 export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
   const sitesHost = c.env.PUBLIC_SITES_HOST?.toLowerCase();
   const url = new URL(c.req.url);
   const hostname = url.hostname.toLowerCase();
-  if (!sitesHost || !isSitesHost(hostname, sitesHost)) return next();
 
-  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
-    return new Response("Method not allowed", {
-      status: 405,
-      headers: { Allow: "GET, HEAD", "X-Content-Type-Options": "nosniff" },
-    });
+  if (!sitesHost || !isSitesHost(hostname, sitesHost)) {
+    // Anything that is not the API itself may be a customer domain; one indexed D1 read decides.
+    if (hostname !== c.env.PUBLIC_API_HOST?.toLowerCase()) {
+      const response = await serveCustomDomain(c, url, hostname);
+      if (response) return response;
+    }
+    return next();
   }
+
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") return methodNotAllowed();
 
   let slug: string;
   let rest: string; // path below the site root, always starting with "/"
@@ -86,30 +158,5 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
     .where(and(eq(sites.slug, slug), eq(sites.status, "published")))
     .limit(1);
   if (!site) return notFoundPage();
-
-  let key: string;
-  let cacheControl: string;
-  if (rest === "/") {
-    key = publishedIndexKey(site.id);
-    cacheControl = "public, max-age=60";
-  } else if (rest.startsWith("/images/") && IMAGE_FILE_PATTERN.test(rest.slice("/images/".length))) {
-    key = `${publishedImagePrefix(site.id)}${rest.slice("/images/".length)}`;
-    cacheControl = "public, max-age=31536000, immutable";
-  } else {
-    return notFoundPage();
-  }
-
-  const object = await c.env.PUBLISHED.get(key, { onlyIf: c.req.raw.headers });
-  if (!object) return notFoundPage();
-
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  if (rest === "/") headers.set("Content-Type", "text/html; charset=utf-8");
-  headers.set("ETag", object.httpEtag);
-  headers.set("Cache-Control", cacheControl);
-  headers.set("X-Content-Type-Options", "nosniff");
-
-  // With `onlyIf`, R2 returns an object without a body when the precondition (If-None-Match) fails.
-  if (!("body" in object)) return new Response(null, { status: 304, headers });
-  return new Response(object.body, { headers });
+  return serveSiteFile(c, site.id, rest);
 });

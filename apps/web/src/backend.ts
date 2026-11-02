@@ -14,9 +14,12 @@ import {
 import {
   createApiClient,
   ApiError,
+  type DomainKind,
+  type DomainList,
   type GetToken,
   type LoadedSite,
   type PublishResult,
+  type SiteDomain,
   type SiteSummary,
 } from "./api";
 import { API_URL } from "./env";
@@ -30,6 +33,15 @@ export interface AiBackend {
   theme(siteId: string, request: AiThemeRequest): Promise<AiThemeResponse>;
   /** `assetKey` is the R2 key: an `ImageRef.src` without its "/assets/" prefix. */
   altText(siteId: string, assetKey: string): Promise<AiAltTextResponse>;
+}
+
+/** Customer domains on hosted sites. Only the API backend has them. */
+export interface DomainsBackend {
+  list(siteId: string): Promise<DomainList>;
+  add(siteId: string, hostname: string, kind: DomainKind): Promise<SiteDomain>;
+  /** Asks the server to re-check verification and certificate status with Cloudflare. */
+  refresh(siteId: string, domainId: string): Promise<SiteDomain>;
+  remove(siteId: string, domainId: string): Promise<void>;
 }
 
 /**
@@ -51,6 +63,8 @@ export interface Backend {
   /** Publishes the saved document on Ministry Sites. API mode only. */
   publish?(siteId: string): Promise<PublishResult>;
   unpublish?(siteId: string): Promise<void>;
+  /** Custom domains for the published site. API mode only. */
+  domains?: DomainsBackend;
 }
 
 const ABSOLUTE = /^(https?:|data:|blob:)/i;
@@ -81,6 +95,12 @@ export function createApiBackend(getToken: GetToken): Backend {
     },
     publish: (siteId) => api.publish(siteId),
     unpublish: (siteId) => api.unpublish(siteId),
+    domains: {
+      list: (siteId) => api.listDomains(siteId),
+      add: (siteId, hostname, kind) => api.addDomain(siteId, hostname, kind),
+      refresh: (siteId, domainId) => api.refreshDomain(siteId, domainId),
+      remove: (siteId, domainId) => api.removeDomain(siteId, domainId),
+    },
   };
 }
 

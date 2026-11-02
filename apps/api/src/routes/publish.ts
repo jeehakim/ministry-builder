@@ -13,6 +13,7 @@ import {
   publishedIndexKey,
   publishedPrefix,
   publishedUrlFor,
+  relativizeRootLinks,
 } from "../published";
 import type { AppEnv } from "../types";
 
@@ -64,7 +65,7 @@ publishRoutes.post("/sites/:id/publish", async (c) => {
     keep.add(destKey);
   }
 
-  await c.env.PUBLISHED.put(publishedIndexKey(site.id), html, {
+  await c.env.PUBLISHED.put(publishedIndexKey(site.id), relativizeRootLinks(html), {
     httpMetadata: { contentType: "text/html; charset=utf-8" },
   });
 

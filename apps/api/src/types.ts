@@ -11,6 +11,14 @@ export type Bindings = {
   AI_DAILY_LIMIT: string;
   /** Hostname that serves published sites, e.g. "sites.shofar.io" (var). */
   PUBLIC_SITES_HOST: string;
+  /** Hostname of this API, e.g. "api.build.shofar.io" (var). Requests for it skip the custom-domain lookup. */
+  PUBLIC_API_HOST?: string;
+  /** Proxied hostname on the shofar.io zone that customers CNAME their domain to (var). */
+  CUSTOM_HOSTNAME_CNAME_TARGET?: string;
+  /** Zone id of shofar.io, where custom hostnames are created (var). */
+  CLOUDFLARE_ZONE_ID?: string;
+  /** Secret. API token with "SSL and Certificates: Edit" on the shofar.io zone. Enables custom domains. */
+  CLOUDFLARE_API_TOKEN?: string;
   /** Set to "fake" in tests to use the deterministic provider. Never set in production. */
   AI_PROVIDER?: string;
   /** Secret. Shared token for staff automation (X-Staff-Token); authenticates as the admin user `staff-bot`. */
