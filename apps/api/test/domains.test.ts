@@ -595,7 +595,7 @@ describe("hosting on a custom domain", () => {
   });
 
   it("lets unknown hosts and the API host fall through to the API", async () => {
-    expect((await hosted("https://api.build.shofar.io/health")).status).toBe(200);
+    expect((await hosted("https://api.build.shofar.ai/health")).status).toBe(200);
     expect((await hosted("https://nobody.example/health")).status).toBe(200);
     expect((await hosted("https://nobody.example/nothing")).status).toBe(404);
     expect((await hosted("https://nobody.example/nothing")).headers.get("content-type")).toContain("application/json");

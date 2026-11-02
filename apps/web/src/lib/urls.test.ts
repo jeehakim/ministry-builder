@@ -8,7 +8,7 @@ test("assetKeyFromSrc strips the /assets/ prefix", () => {
 });
 
 test("assetKeyFromSrc accepts an absolute API URL", () => {
-  assert.equal(assetKeyFromSrc("https://api.build.shofar.io/assets/s/k.webp"), "s/k.webp");
+  assert.equal(assetKeyFromSrc("https://api.build.shofar.ai/assets/s/k.webp"), "s/k.webp");
 });
 
 test("assetKeyFromSrc returns null for non-asset sources", () => {

@@ -9,7 +9,7 @@ import { hostedContentSecurityPolicy } from "../src/security";
 import { call, insertActiveDomain, jsonInit, makeSite, uploadPng, verifyContactEmail, type TestSite } from "./helpers";
 
 const HOST = "sites.shofar.io";
-const API = "https://api.build.shofar.io";
+const API = "https://api.build.shofar.ai";
 const STAFF = { "X-Staff-Token": "test-staff-token" };
 
 /** Requests go through the real app so the middleware order is the production one. */
@@ -74,9 +74,9 @@ describe("API response headers", () => {
 
     const preflight = await app(`${API}/sites`, {
       method: "OPTIONS",
-      headers: { Origin: "https://build.shofar.io", "Access-Control-Request-Method": "GET" },
+      headers: { Origin: "https://build.shofar.ai", "Access-Control-Request-Method": "GET" },
     });
-    expect(preflight.headers.get("access-control-allow-origin")).toBe("https://build.shofar.io");
+    expect(preflight.headers.get("access-control-allow-origin")).toBe("https://build.shofar.ai");
     expect(preflight.headers.get("x-content-type-options")).toBe("nosniff");
     expect(preflight.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
 

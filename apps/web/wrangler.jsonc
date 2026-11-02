@@ -7,8 +7,9 @@
   "workers_dev": false,
   "preview_urls": false,
 
-  // Production hostname on the shofar.io zone (DNS and TLS managed by Cloudflare).
-  "routes": [{ "pattern": "build.shofar.io", "custom_domain": true }],
+  // Production hostname on the shofar.ai zone (DNS and TLS managed by Cloudflare; `wrangler deploy` attaches it).
+  // The API is api.build.shofar.ai (apps/api/wrangler.jsonc); hosted sites stay on sites.shofar.io.
+  "routes": [{ "pattern": "build.shofar.ai", "custom_domain": true }],
 
   // Static SPA: every unknown path serves index.html so client routes like /sites/:id work.
   "assets": {

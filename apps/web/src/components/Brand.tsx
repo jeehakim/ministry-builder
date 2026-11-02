@@ -15,7 +15,7 @@ export function Brand({ compact = false, className }: { compact?: boolean; class
       {compact ? null : (
         <span className="leading-none">
           <span className="block text-sm font-semibold tracking-tight">Ministry Sites</span>
-          <span className="block text-[11px] text-muted-foreground">build.shofar.io</span>
+          <span className="block text-[11px] text-muted-foreground">build.shofar.ai</span>
         </span>
       )}
     </Link>

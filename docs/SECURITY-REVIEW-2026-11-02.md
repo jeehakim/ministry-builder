@@ -10,7 +10,7 @@ but leave out step-by-step exploitation.
 [HIGH] 1. Stored XSS: theme values break out of `<style>` on the shared sites.shofar.io origin
 LOCATION: packages/templates/src/util.ts:5 (themeVars); packages/schema/src/site.ts:27-32 (Theme fields are plain z.string()); packages/templates/src/index.tsx:96, :119
 ATTACK PATH: A signed-in user saves a theme color or font value that closes the `<style>` element, through PUT /sites/:id/document, or through AI theme/draft output (routes/ai.ts:202, :274), which is checked against the same loose schema. Publishing writes their own markup and script into the hosted page. Confirmed with a PoC against the real renderer (scratchpad/poc.test.tsx).
-IMPACT: Script runs for every visitor, on an origin shared by all tenants with no CSP or framing protection at HEAD, and on the same site as build.shofar.io and api.build.shofar.io. This allows tampering with other tenants' pages (for example donation links), cookie tossing onto .shofar.io, and phishing that could get sites.shofar.io blocklisted for every tenant.
+IMPACT: Script runs for every visitor, on an origin shared by all tenants with no CSP or framing protection at HEAD, and, at the time of the review, on the same site as the builder and its API (then on build.shofar.io; since moved to build.shofar.ai, a different registrable domain, see apps/api/README.md "Moving the builder to shofar.ai"). This allows tampering with other tenants' pages (for example donation links), cookie tossing onto .shofar.io, and phishing that could get sites.shofar.io blocklisted for every tenant.
 FIX: Constrain the schema: colors to `^#[0-9a-fA-F]{3,8}$` (or a small allowlist of rgb()/hsl() forms), fonts to `^[A-Za-z0-9 ,'"-]{1,200}$`. Also escape `<` inside themeVars. The in-flight CSP helps, but it does not fix the breakout: HTML injection (including meta refresh) still works, and the new href sanitizer never looks at theme fields.
 
 [HIGH] 2. One account can use up the whole platform's free-plan resources
@@ -103,7 +103,7 @@ FIX: Set pnpm `minimumReleaseAge`, and move `shadcn` to devDependencies.
 - Uploads check type against an allowlist and the magic bytes, keys are server-generated UUIDs, GET keys must match a strict pattern, nosniff is set, and SVG is not allowed.
 - R2 is well isolated: publish copies only the site's own assets, AI image keys are scope-checked, hosting paths are regex-gated (no traversal), and the published bucket is separate from IMAGES.
 - React 19.3 server rendering escapes text and blocks javascript: URLs. JSON-LD escapes `<`, and the head meta tags are escaped.
-- Editor previews are sandboxed without allow-scripts, so finding 1 does not run inside build.shofar.io.
+- Editor previews are sandboxed without allow-scripts, so finding 1 does not run inside the builder app.
 - Email header fields are made single-line, CR/LF is rejected and the HTML is escaped. Form bodies are capped at 64 KB, and there is a honeypot field.
 - Translation strips href, email, phone and formEndpoint from what goes to the model, and the overlay is forced back to the source's shape.
 - I found no secrets in the repo or its history. There is no SSRF path: every outbound fetch goes to a fixed host. The agent config (.claude/launch.json, CLAUDE.md) is benign, with no hooks or .mcp.json.
