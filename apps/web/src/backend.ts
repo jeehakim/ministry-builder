@@ -77,6 +77,8 @@ export interface Backend {
   unpublish?(siteId: string): Promise<void>;
   /** Custom domains for the published site. API mode only. */
   domains?: DomainsBackend;
+  /** Deletes a site with everything it owns (versions, images, published files, messages). API mode only. */
+  deleteSite?(siteId: string): Promise<void>;
 }
 
 const ABSOLUTE = /^(https?:|data:|blob:)/i;
@@ -118,6 +120,7 @@ export function createApiBackend(getToken: GetToken): Backend {
       refresh: (siteId, domainId) => api.refreshDomain(siteId, domainId),
       remove: (siteId, domainId) => api.removeDomain(siteId, domainId),
     },
+    deleteSite: (siteId) => api.deleteSite(siteId),
   };
 }
 

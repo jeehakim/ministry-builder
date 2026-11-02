@@ -1,6 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate } from "react-router";
-import { ArrowRight, Globe, Loader2, Plus } from "lucide-react";
+import { ArrowRight, Globe, Loader2, MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { SiteSummary } from "./api";
 import { LOCAL_SITE_ID } from "./backend";
 import { useBackend } from "./backend-context";
@@ -33,6 +40,23 @@ export function Home() {
   const [orgName, setOrgName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<SiteSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete() {
+    if (!pendingDelete || !backend.deleteSite) return;
+    setDeleting(true);
+    try {
+      await backend.deleteSite(pendingDelete.id);
+      setState((current) => (current.kind === "ready" ? { kind: "ready", sites: current.sites.filter((x) => x.id !== pendingDelete.id) } : current));
+      toast.success(`Deleted ${pendingDelete.orgName}`, { description: "The site, its images, messages and published pages are gone." });
+      setPendingDelete(null);
+    } catch (err) {
+      toast.error("Could not delete the site", { description: err instanceof Error ? err.message : "Something went wrong." });
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -143,9 +167,26 @@ export function Home() {
                           </div>
                         ) : null}
                       </div>
-                      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand">
-                        <Globe className="size-4" aria-hidden="true" />
-                      </span>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <span className="grid size-8 place-items-center rounded-lg bg-brand-soft text-brand">
+                          <Globe className="size-4" aria-hidden="true" />
+                        </span>
+                        {backend.deleteSite ? (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon-sm" aria-label={`More actions for ${s.orgName}`} className="text-muted-foreground">
+                                <MoreHorizontal />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem variant="destructive" onSelect={() => setPendingDelete(s)}>
+                                <Trash2 />
+                                Delete site
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        ) : null}
+                      </div>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted-foreground">Updated {new Date(s.updatedAt).toLocaleDateString()}</span>
@@ -197,6 +238,27 @@ export function Home() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={pendingDelete !== null} onOpenChange={(o) => !o && !deleting && setPendingDelete(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete {pendingDelete?.orgName}?</DialogTitle>
+            <DialogDescription>
+              This removes the site, every saved version, uploaded images, contact messages and the published pages
+              {pendingDelete?.publishedUrl ? ` at ${pendingDelete.publishedUrl}` : ""}. It cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={deleting} onClick={() => setPendingDelete(null)}>
+              Keep it
+            </Button>
+            <Button type="button" variant="destructive" disabled={deleting} onClick={() => void handleDelete()}>
+              {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
+              {deleting ? "Deleting…" : "Delete site"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

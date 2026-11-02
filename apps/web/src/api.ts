@@ -118,6 +118,8 @@ export interface ApiClient {
   addDomain(siteId: string, hostname: string, kind: DomainKind): Promise<SiteDomain>;
   refreshDomain(siteId: string, domainId: string): Promise<SiteDomain>;
   removeDomain(siteId: string, domainId: string): Promise<void>;
+  /** Deletes the site and everything it owns. */
+  deleteSite(id: string): Promise<void>;
   listMessages(siteId: string): Promise<ContactMessage[]>;
   deleteMessage(siteId: string, id: string): Promise<void>;
   aiUsage(): Promise<AiUsageResponse>;
@@ -272,6 +274,9 @@ export function createApiClient(getToken: GetToken, baseUrl: string = API_URL): 
     },
     async removeDomain(siteId, domainId) {
       await request<unknown>(`${sitePath(siteId)}/domains/${encodeURIComponent(domainId)}`, json("DELETE"), JSON_TIMEOUT_MS);
+    },
+    async deleteSite(id) {
+      await request<unknown>(sitePath(id), json("DELETE"), JSON_TIMEOUT_MS);
     },
     async listMessages(siteId) {
       const data = await request<unknown>(`${sitePath(siteId)}/messages?limit=${MESSAGES_LIMIT}`, json("GET"), JSON_TIMEOUT_MS);
