@@ -74,6 +74,7 @@ export function renderSite(input: SiteDocument, options: RenderOptions): Rendere
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
 <meta name="description" content="${escapeHtml(doc.meta.description || doc.meta.tagline)}">
+${(options.languageLinks ?? []).map((l) => `<link rel="alternate" hreflang="${escapeHtml(l.code)}" href="${escapeHtml(l.href)}">`).join("\n")}
 <style>${template.css(doc.theme)}</style>
 </head>
 <body>

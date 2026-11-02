@@ -1,6 +1,7 @@
 import type { Section, SiteDocument } from "@ministry/schema";
 import type { RenderOptions } from "../types";
 import { paragraphs } from "../util";
+import { LanguageSwitcher } from "../LanguageSwitcher";
 
 type Props = { doc: SiteDocument; options: RenderOptions };
 type Attrs = Record<string, string | undefined>;
@@ -44,6 +45,7 @@ export function ModernBody({ doc, options }: Props) {
               </a>
             ))}
           </nav>
+          <LanguageSwitcher links={options.languageLinks} />
           {topCta ? <a className="btn sm" href={topCta.href}>{topCta.label}</a> : null}
         </div>
       </header>

@@ -1,6 +1,7 @@
 import type { Section, SiteDocument } from "@ministry/schema";
 import type { RenderOptions } from "../types";
 import { paragraphs } from "../util";
+import { LanguageSwitcher } from "../LanguageSwitcher";
 
 type Props = { doc: SiteDocument; options: RenderOptions };
 
@@ -25,6 +26,7 @@ export function ClassicBody({ doc, options }: Props) {
             </a>
           ))}
         </nav>
+        <LanguageSwitcher links={options.languageLinks} />
       </header>
       <main id="top">
         {hero && hero.type === "hero" ? (

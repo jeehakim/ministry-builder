@@ -6,6 +6,15 @@ export interface RenderOptions {
   imageUrl: (ref: ImageRef) => string;
   /** When true, sections get data-section-id attributes for editor scroll-to. */
   editor?: boolean;
+  /** Language switcher entries (current one marked). Omitted or empty = no switcher. */
+  languageLinks?: LanguageLink[];
+}
+
+export interface LanguageLink {
+  code: string;
+  label: string;
+  href: string;
+  current: boolean;
 }
 
 export interface Template {
