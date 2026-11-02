@@ -122,7 +122,8 @@ Hosting Worker — one router for all hosted sites
 Design notes:
 
 - **Static SPA plus small Workers** instead of Next.js on Workers: the Workers free plan caps CPU at 10 ms per request, so rendering happens in the browser and the Workers do JSON, storage, and outbound API calls. Workers Paid ($5/month) is the escape hatch, and becomes worthwhile once hosted-site traffic approaches 100k requests per day.
-- **Cloudflare for SaaS** gives each hosted customer's domain SSL and routes it to the Hosting Worker. The first 100 custom hostnames are free, then about $0.10 per hostname per month. Customers either point a CNAME or buy the domain through us (Cloudflare Registrar at cost, moved under the platform zone).
+- **Domains.** The platform runs at `build.shofar.io` with the API at `api.build.shofar.io`; both `shofar.io` and `shofar.ai` are already on Shofar's Cloudflare account. Hosted sites get `<slug>.sites.shofar.io` by default.
+- **Cloudflare for SaaS** gives each hosted customer's domain SSL and routes it to the Hosting Worker, using the `shofar.io` zone as the fallback origin. The first 100 custom hostnames are free, then about $0.10 per hostname per month. Customers either point a CNAME or buy the domain through us (Cloudflare Registrar at cost, moved under the platform zone).
 - **Free tier claim flow** uses Cloudflare's Temporary Accounts API (July 2026): the backend deploys to a temporary account, shows a live preview and a claim link, and the user signs in or creates a Cloudflare account within 60 minutes to keep it. Fallback is ZIP + Cloudflare Drop.
 - **Provider adapter for AI.** One interface (`draftSite`, `variations`, `rewriteField`, `interpretDesign`) with an OpenAI implementation now and an Anthropic one later. The OpenAI free tier is a monthly spending ceiling, not a credit, so treat it as temporary.
 
@@ -133,10 +134,10 @@ Design notes:
 | Workers, D1, R2, KV (free plan) | $0 (Workers Paid $5 when needed) |
 | Clerk (free to 50,000 retained users) | $0 |
 | Cloudflare for SaaS custom hostnames | $0 for first 100 |
-| Platform domain | about $1 |
+| Platform domain (`shofar.io`, already owned) | $0 |
 | Resend (email), Sentry (errors), Cloudflare Web Analytics | $0 |
 | Stripe | per transaction |
-| **Total** | **$1 to $6** |
+| **Total** | **$0 to $5** |
 
 At 100 paying customers the bill is still under about $30 per month.
 

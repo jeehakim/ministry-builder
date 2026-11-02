@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ministry-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-13",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // Production route (zone shofar.io). Uncomment once the zone is ready:
+  // "routes": [{ "pattern": "api.build.shofar.io", "custom_domain": true }],
+
+  "vars": {
+    // Origin of the web app allowed by CORS. Override per environment.
+    "ALLOWED_ORIGIN": "http://localhost:5173"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ministry-sites",
+      // Paste the id printed by `wrangler d1 create ministry-sites`.
+      "database_id": "REPLACE_WITH_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "r2_buckets": [{ "binding": "IMAGES", "bucket_name": "ministry-images" }]
+}
