@@ -5,8 +5,10 @@ import { ClassicBody } from "./classic/Classic";
 import { classicCss } from "./classic/styles";
 import { ModernBody } from "./modern/Modern";
 import { modernCss } from "./modern/styles";
+import { BoldBody } from "./bold/Bold";
+import { boldCss } from "./bold/styles";
 
-export type { RenderOptions, Template } from "./types";
+export type { LanguageLink, RenderOptions, Template } from "./types";
 
 export const classic: Template = {
   id: "classic",
@@ -30,7 +32,21 @@ export const modern: Template = {
   Body: ModernBody,
 };
 
-export const templates: Record<string, Template> = { classic, modern };
+export const bold: Template = {
+  id: "bold",
+  name: "Bold",
+  description: "Confident, high-contrast layout with a full-bleed hero, a values grid and a closing call to action. Good for foundations and campaigns.",
+  themeDefaults: {
+    heroStyle: "image",
+    radius: "large",
+    headingFont: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+    bodyFont: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+  },
+  css: boldCss,
+  Body: BoldBody,
+};
+
+export const templates: Record<string, Template> = { classic, modern, bold };
 
 /** Registry keys in display order, for other packages (pickers, validation). */
 export const TEMPLATE_IDS: string[] = Object.keys(templates);
@@ -74,6 +90,7 @@ export function renderSite(input: SiteDocument, options: RenderOptions): Rendere
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
 <meta name="description" content="${escapeHtml(doc.meta.description || doc.meta.tagline)}">
+${(options.languageLinks ?? []).map((l) => `<link rel="alternate" hreflang="${escapeHtml(l.code)}" href="${escapeHtml(l.href)}">`).join("\n")}
 <style>${template.css(doc.theme)}</style>
 </head>
 <body>

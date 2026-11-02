@@ -8,6 +8,7 @@ import {
   type AiRewriteResponse,
   type AiThemeRequest,
   type AiThemeResponse,
+  type AiTranslateResponse,
   type AiUsageResponse,
   type ImageRef,
 } from "@ministry/schema";
@@ -33,6 +34,8 @@ export interface AiBackend {
   theme(siteId: string, request: AiThemeRequest): Promise<AiThemeResponse>;
   /** `assetKey` is the R2 key: an `ImageRef.src` without its "/assets/" prefix. */
   altText(siteId: string, assetKey: string): Promise<AiAltTextResponse>;
+  /** Translates the whole page into `language`. The server also saves the overlay as a new version. */
+  translate(siteId: string, language: string): Promise<AiTranslateResponse>;
 }
 
 /** Customer domains on hosted sites. Only the API backend has them. */
@@ -92,6 +95,7 @@ export function createApiBackend(getToken: GetToken): Backend {
       rewrite: (siteId, request) => api.aiRewrite(siteId, request),
       theme: (siteId, request) => api.aiTheme(siteId, request),
       altText: (siteId, assetKey) => api.aiAltText(siteId, assetKey),
+      translate: (siteId, language) => api.aiTranslate(siteId, language),
     },
     publish: (siteId) => api.publish(siteId),
     unpublish: (siteId) => api.unpublish(siteId),

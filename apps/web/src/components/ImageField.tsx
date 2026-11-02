@@ -15,8 +15,14 @@ export function ImageField(props: {
   label: string;
   value: ImageRef | undefined;
   onChange: (value: ImageRef | undefined) => void;
+  /**
+   * Editing a translation: the picture itself cannot change, only its alt text.
+   * Pass `lockAlt` as well where the alt text has no translation slot (the logo).
+   */
+  locked?: boolean;
+  lockAlt?: boolean;
 }) {
-  const { label, value, onChange } = props;
+  const { label, value, onChange, locked = false, lockAlt = false } = props;
   const backend = useBackend();
   const { ai, enabled, disabledReason, busy: aiBusy, runAltText } = useAi();
   const inputId = useId();
@@ -49,6 +55,7 @@ export function ImageField(props: {
   function onDrop(e: DragEvent) {
     e.preventDefault();
     setDragging(false);
+    if (locked) return;
     const file = e.dataTransfer.files[0];
     if (file) void handleFile(file);
   }
@@ -59,7 +66,7 @@ export function ImageField(props: {
       <div
         onDragOver={(e) => {
           e.preventDefault();
-          setDragging(true);
+          if (!locked) setDragging(true);
         }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
@@ -75,17 +82,24 @@ export function ImageField(props: {
             </div>
             <div className="min-w-0 flex-1 space-y-2">
               <div className="flex flex-wrap items-center gap-1.5">
-                <Button asChild variant="outline" size="sm" disabled={busy}>
-                  <label htmlFor={inputId} className="cursor-pointer">
-                    {busy ? <Loader2 className="animate-spin" /> : <ImagePlus />}
+                {locked ? (
+                  <Button type="button" variant="outline" size="sm" disabled>
+                    <ImagePlus />
                     Replace
-                  </label>
-                </Button>
-                <Button type="button" variant="ghost" size="sm" onClick={() => onChange(undefined)}>
+                  </Button>
+                ) : (
+                  <Button asChild variant="outline" size="sm" disabled={busy}>
+                    <label htmlFor={inputId} className="cursor-pointer">
+                      {busy ? <Loader2 className="animate-spin" /> : <ImagePlus />}
+                      Replace
+                    </label>
+                  </Button>
+                )}
+                <Button type="button" variant="ghost" size="sm" disabled={locked} onClick={() => onChange(undefined)}>
                   <Trash2 />
                   Remove
                 </Button>
-                {ai && assetKeyFromSrc(value.src) ? (
+                {ai && !locked && assetKeyFromSrc(value.src) ? (
                   <Button
                     type="button"
                     variant="ghost"
@@ -103,10 +117,13 @@ export function ImageField(props: {
                 aria-label={`${label} alt text`}
                 placeholder="Describe the image for screen readers"
                 value={value.alt}
+                disabled={lockAlt}
                 onChange={(e) => onChange({ ...value, alt: e.target.value })}
               />
             </div>
           </div>
+        ) : locked ? (
+          <p className="px-3 py-4 text-center text-xs text-muted-foreground">No image</p>
         ) : (
           <label
             htmlFor={inputId}
@@ -124,7 +141,7 @@ export function ImageField(props: {
           id={inputId}
           type="file"
           accept="image/*"
-          disabled={busy}
+          disabled={busy || locked}
           className="sr-only"
           onChange={(e) => {
             const file = e.target.files?.[0];

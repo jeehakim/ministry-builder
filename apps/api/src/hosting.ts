@@ -2,7 +2,13 @@ import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
-import { publishedImagePrefix, publishedIndexKey } from "./published";
+import {
+  LANGUAGE_PATH_PATTERN,
+  LANGUAGE_TAG_PATTERN,
+  publishedImagePrefix,
+  publishedIndexKey,
+  publishedLanguageIndexKey,
+} from "./published";
 import { domains, sites } from "./db/schema";
 import { SLUG_PATTERN } from "./routes/sites";
 import type { AppEnv } from "./types";
@@ -53,13 +59,32 @@ function methodNotAllowed(): Response {
   });
 }
 
-/** Streams one object of a published site: its index at "/" or an image under "/images/". */
-async function serveSiteFile(c: Context<AppEnv>, siteId: string, rest: string): Promise<Response> {
+/**
+ * Streams one object of a published site: its index at "/", a language page at "/<lang>/" or an
+ * image under "/images/". `base` is the URL prefix of the site root ("" or "/<slug>"), used for the
+ * redirect from "/<lang>" to "/<lang>/".
+ */
+async function serveSiteFile(c: Context<AppEnv>, siteId: string, base: string, rest: string, search: string): Promise<Response> {
   let key: string;
   let cacheControl: string;
+  let isPage = false;
+  let pageLanguage: string | undefined;
+  const languageMatch = /^\/([^/]+)(\/)?$/.exec(rest);
+  const lang = languageMatch?.[1];
   if (rest === "/") {
     key = publishedIndexKey(siteId);
     cacheControl = "public, max-age=60";
+    isPage = true;
+  } else if (lang !== undefined && LANGUAGE_PATH_PATTERN.test(lang)) {
+    key = publishedLanguageIndexKey(siteId, lang);
+    cacheControl = "public, max-age=60";
+    isPage = true;
+    pageLanguage = lang;
+    if (languageMatch?.[2] === undefined) {
+      // Only redirect to pages that exist, so unknown languages stay a plain 404.
+      if (!(await c.env.PUBLISHED.head(key))) return notFoundPage();
+      return redirect(301, `${base}/${lang}/${search}`);
+    }
   } else if (rest.startsWith("/images/") && IMAGE_FILE_PATTERN.test(rest.slice("/images/".length))) {
     key = `${publishedImagePrefix(siteId)}${rest.slice("/images/".length)}`;
     cacheControl = "public, max-age=31536000, immutable";
@@ -72,7 +97,11 @@ async function serveSiteFile(c: Context<AppEnv>, siteId: string, rest: string): 
 
   const headers = new Headers();
   object.writeHttpMetadata(headers);
-  if (rest === "/") headers.set("Content-Type", "text/html; charset=utf-8");
+  if (isPage) {
+    headers.set("Content-Type", "text/html; charset=utf-8");
+    const contentLanguage = pageLanguage ?? object.customMetadata?.language;
+    if (contentLanguage && LANGUAGE_TAG_PATTERN.test(contentLanguage)) headers.set("Content-Language", contentLanguage);
+  }
   headers.set("ETag", object.httpEtag);
   headers.set("Cache-Control", cacheControl);
   headers.set("X-Content-Type-Options", "nosniff");
@@ -110,16 +139,16 @@ async function serveCustomDomain(c: Context<AppEnv>, url: URL, hostname: string)
       : `https://${c.env.PUBLIC_SITES_HOST}/${match.slug}/`;
     return redirect(301, location);
   }
-  return serveSiteFile(c, match.siteId, url.pathname);
+  return serveSiteFile(c, match.siteId, "", url.pathname, url.search);
 }
 
 /**
  * Serves published sites from the PUBLISHED bucket (never from IMAGES). Runs before CORS and
  * auth: requests for the sites host and for customer domains never reach the API routes.
  *
- * Customer domain: bridgeworldfoundation.org/ and /images/<file>
- * Host form:       sites.shofar.io/<slug>/ and /<slug>/images/<file>
- * Subdomain form:  <slug>.sites.shofar.io/ and /images/<file>
+ * Customer domain: bridgeworldfoundation.org/, /<lang>/ and /images/<file>
+ * Host form:       sites.shofar.io/<slug>/, /<slug>/<lang>/ and /<slug>/images/<file>
+ * Subdomain form:  <slug>.sites.shofar.io/, /<lang>/ and /images/<file>
  */
 export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
   const sitesHost = c.env.PUBLIC_SITES_HOST?.toLowerCase();
@@ -138,6 +167,7 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
   if (c.req.method !== "GET" && c.req.method !== "HEAD") return methodNotAllowed();
 
   let slug: string;
+  let base: string; // URL prefix of the site root, without a trailing slash
   let rest: string; // path below the site root, always starting with "/"
   if (hostname === sitesHost) {
     if (url.pathname === "/") return redirect(302, WEB_APP_URL);
@@ -145,9 +175,11 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
     if (!match) return notFoundPage();
     slug = match[1] ?? "";
     if (match[2] === undefined) return redirect(301, `/${slug}/${url.search}`);
+    base = `/${slug}`;
     rest = match[2];
   } else {
     slug = hostname.slice(0, hostname.length - sitesHost.length - 1).split(".")[0] ?? "";
+    base = "";
     rest = url.pathname;
   }
   if (!SLUG_PATTERN.test(slug)) return notFoundPage();
@@ -158,5 +190,5 @@ export const serveSites = createMiddleware<AppEnv>(async (c, next) => {
     .where(and(eq(sites.slug, slug), eq(sites.status, "published")))
     .limit(1);
   if (!site) return notFoundPage();
-  return serveSiteFile(c, site.id, rest);
+  return serveSiteFile(c, site.id, base, rest, url.search);
 });

@@ -1,3 +1,4 @@
+import { localizeDocument, SiteDocument } from "@ministry/schema";
 import { templates } from "@ministry/templates";
 import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
@@ -190,5 +191,82 @@ describe("rewrite, theme and alt text", () => {
     const missing = await call("ai_misc_d", `/sites/${mine.id}/ai/alt-text`, jsonInit("POST", { assetKey: `sites/${mine.id}/${crypto.randomUUID()}.png` }));
     expect(missing.status).toBe(404);
     expect((await usage("ai_misc_d")).used).toBe(0);
+  });
+});
+
+describe("POST /sites/:id/ai/translate", () => {
+  type Translate = { language: string; overlay: { meta: { tagline?: string }; sections: Record<string, Record<string, unknown>> } };
+  const translate = (user: string, siteId: string, body: unknown) =>
+    call(user, `/sites/${siteId}/ai/translate`, jsonInit("POST", body));
+
+  async function currentDoc(user: string, siteId: string) {
+    const detail = (await (await call(user, `/sites/${siteId}`)).json()) as { site: { currentVersionId: string }; document: unknown };
+    return { versionId: detail.site.currentVersionId, doc: SiteDocument.parse(detail.document) };
+  }
+
+  it("stores the overlay in a new current version, adds the language and records usage", async () => {
+    const site = await makeSite("ai_tr_a", "Translate Org");
+    const before = await currentDoc("ai_tr_a", site.id);
+    expect(before.doc.meta.languages).toEqual([]);
+
+    const res = await translate("ai_tr_a", site.id, { language: "ko" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Translate;
+    expect(body.language).toBe("ko");
+    expect(body.overlay.meta.tagline).toBe(`[ko] ${before.doc.meta.tagline}`);
+    expect(body.overlay.sections.hero).toMatchObject({ heading: expect.stringMatching(/^\[ko\] /) });
+
+    const after = await currentDoc("ai_tr_a", site.id);
+    expect(after.versionId).not.toBe(before.versionId);
+    expect(after.doc.meta.languages).toEqual(["ko"]);
+    expect(after.doc.translations.ko).toEqual(body.overlay);
+    // The primary text is untouched; only the localized view changes.
+    expect(after.doc.sections).toEqual(before.doc.sections);
+    const hero = localizeDocument(after.doc, "ko").sections.find((s) => s.type === "hero");
+    expect(hero?.type === "hero" && hero.heading).toMatch(/^\[ko\] /);
+
+    const versions = await db().select().from(siteVersions).where(eq(siteVersions.siteId, site.id));
+    expect(versions).toHaveLength(2);
+    expect(versions.find((v) => v.id === after.versionId)?.createdBy).toBe("ai_tr_a");
+
+    expect((await usage("ai_tr_a")).used).toBe(1);
+    const [row] = await db().select().from(aiUsage).where(eq(aiUsage.siteId, site.id));
+    expect(row).toMatchObject({ userId: "ai_tr_a", action: "translate", provider: "fake" });
+  });
+
+  it("replaces an earlier translation of the same language without duplicating it", async () => {
+    const site = await makeSite("ai_tr_b", "Retranslate Org");
+    expect((await translate("ai_tr_b", site.id, { language: "es" })).status).toBe(200);
+    expect((await translate("ai_tr_b", site.id, { language: "es" })).status).toBe(200);
+    expect((await translate("ai_tr_b", site.id, { language: "ko" })).status).toBe(200);
+    const { doc } = await currentDoc("ai_tr_b", site.id);
+    expect(doc.meta.languages).toEqual(["es", "ko"]);
+    expect(Object.keys(doc.translations).sort()).toEqual(["es", "ko"]);
+  });
+
+  it("answers 400 for the primary language or a malformed code, 404 for other people's sites, and spends nothing", async () => {
+    const site = await makeSite("ai_tr_c", "Primary Org");
+    const primary = await translate("ai_tr_c", site.id, { language: "en" });
+    expect(primary.status).toBe(400);
+    expect(((await primary.json()) as { error: string }).error).toBeTruthy();
+    expect((await translate("ai_tr_c", site.id, { language: "../x" })).status).toBe(400);
+    expect((await translate("ai_tr_c", site.id, { language: "x" })).status).toBe(400);
+    expect((await translate("ai_tr_c", site.id, {})).status).toBe(400);
+    expect((await translate("ai_tr_other", site.id, { language: "es" })).status).toBe(404);
+    expect((await usage("ai_tr_c")).used).toBe(0);
+    expect((await currentDoc("ai_tr_c", site.id)).doc.meta.languages).toEqual([]);
+  });
+
+  it("counts against the daily quota and answers 503 without a provider", async () => {
+    const site = await makeSite("ai_tr_d", "Quota Translate");
+    for (let i = 0; i < 4; i++) expect((await translate("ai_tr_d", site.id, { language: "es" })).status).toBe(200);
+    const blocked = await translate("ai_tr_d", site.id, { language: "es" });
+    expect(blocked.status).toBe(429);
+    expect(await blocked.json()).toMatchObject({ used: 4, limit: 4 });
+
+    const other = await makeSite("ai_tr_e", "No Provider Translate");
+    const noProvider = { ...env, AI_PROVIDER: undefined, OPENAI_API_KEY: undefined };
+    const res = await call("ai_tr_e", `/sites/${other.id}/ai/translate`, jsonInit("POST", { language: "es" }), noProvider);
+    expect(res.status).toBe(503);
   });
 });

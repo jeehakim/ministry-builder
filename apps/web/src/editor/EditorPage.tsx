@@ -1,12 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
-import { SiteDocument, type AiDraftRequest, type AiDraftResponse, type AiDraftVariation, type Section } from "@ministry/schema";
+import {
+  languageName,
+  localizeDocument,
+  SiteDocument,
+  siteLanguages,
+  type AiDraftRequest,
+  type AiDraftResponse,
+  type AiDraftVariation,
+  type Section,
+} from "@ministry/schema";
 import { AlertCircle, ArrowLeft, ExternalLink, Monitor, Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import type { SiteInfo } from "../api";
 import { useBackend } from "../backend-context";
 import { PublishModal } from "../components/PublishModal";
 import { buildExportZip, downloadBlob, exportFileName } from "../lib/exportZip";
+import { previewLanguageLinks } from "../lib/languages";
 import { useLatest } from "../lib/useLatest";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,15 +25,17 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AiProvider, useAi } from "./AiContext";
 import { DraftDialog } from "./DraftDialog";
-import { formatIssue } from "./documentOps";
+import { editSection, formatIssue, setTranslation } from "./documentOps";
 import { EditorHeader } from "./EditorHeader";
 import { SiteIdProvider } from "./EditorContext";
 import { FieldsForm } from "./FieldsForm";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 import { SECTION_FIELDS, SECTION_LABELS, type Obj } from "./fields";
 import { Preview, type Device } from "./Preview";
 import { SectionList, sectionTitle } from "./SectionList";
 import { SECTION_ICONS } from "./sectionMeta";
 import { SiteForm } from "./SiteForm";
+import { useEditingLanguage } from "./useEditingLanguage";
 import { useSiteDocument } from "./useSiteDocument";
 import { VariationPicker } from "./VariationPicker";
 import { renderSite } from "@ministry/templates";
@@ -73,10 +85,45 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
   const dialogNow = useLatest(dialog);
   const siteSlug = site.slug;
 
+  const { active: lang, translating, setEditingLang } = useEditingLanguage(doc);
+  const [translatingTo, setTranslatingTo] = useState<string | null>(null);
+  // The forms and the preview show this view; edits are routed back to the primary text or an overlay.
+  const viewDoc = useMemo(() => localizeDocument(doc, lang), [doc, lang]);
+  const languages = useMemo(() => siteLanguages(doc), [doc]);
+  const languageLinks = useMemo(() => previewLanguageLinks(doc, lang), [doc, lang]);
+
   const selected: Section | undefined = useMemo(
-    () => doc.sections.find((s) => s.id === selectedId) ?? doc.sections[0],
-    [doc, selectedId],
+    () => viewDoc.sections.find((s) => s.id === selectedId) ?? viewDoc.sections[0],
+    [viewDoc, selectedId],
   );
+
+  function openLanguage(code: string) {
+    setEditingLang(code);
+    setTab("sections");
+  }
+
+  /** Flushes pending edits, has the AI translate the saved page, and applies the overlay locally. Resolves true on success. */
+  async function translateInto(code: string): Promise<boolean> {
+    if (translatingTo !== null) return false;
+    setTranslatingTo(code);
+    try {
+      // The server translates its saved copy, so make sure it has the latest text.
+      try {
+        await editor.flush();
+      } catch (err) {
+        toast.error("Could not save your latest changes first", { description: err instanceof Error ? err.message : "Try again in a moment." });
+        return false;
+      }
+      const result = await ai.runTranslate(code);
+      if (!result) return false;
+      editor.update((d) => setTranslation(d, code, result.overlay));
+      openLanguage(code);
+      toast.success(`Translated to ${languageName(code)}. Review and edit any line.`);
+      return true;
+    } finally {
+      setTranslatingTo(null);
+    }
+  }
 
   async function handleGenerate(request: AiDraftRequest) {
     const result = await ai.runDraft(request);
@@ -119,7 +166,7 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
 
   function openPreviewTab() {
     try {
-      const { html } = renderSite(doc, { imageUrl: (ref) => backend.imageUrl(ref) });
+      const { html } = renderSite(viewDoc, { imageUrl: (ref) => backend.imageUrl(ref) });
       const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
       window.open(url, "_blank", "noopener");
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
@@ -148,6 +195,7 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
 
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(340px,400px)_1fr]">
           <aside className="flex min-h-0 flex-col border-r bg-sidebar">
+            <LanguageSwitcher languages={languages} active={lang} onSelect={setEditingLang} />
             <Tabs value={tab} onValueChange={(v) => setTab(v === "site" ? "site" : "sections")} className="flex min-h-0 flex-1 flex-col gap-0">
               <div className="shrink-0 border-b px-3 pt-2">
                 <TabsList variant="line" className="w-full">
@@ -166,7 +214,8 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
               <TabsContent value="sections" className="min-h-0 flex-1 overflow-y-auto">
                 <div className="space-y-5 p-3">
                   <SectionList
-                    sections={doc.sections}
+                    sections={viewDoc.sections}
+                    locked={translating}
                     selectedId={selected?.id ?? null}
                     onSelect={setSelectedId}
                     onMove={editor.moveSection}
@@ -190,11 +239,12 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
                         </div>
                       </div>
                       <FieldsForm
-                        key={selected.id}
+                        key={`${selected.id}:${lang}`}
                         value={selected}
                         fields={SECTION_FIELDS[selected.type]}
                         sectionType={selected.type}
-                        onChange={(next: Obj) => editor.replaceSection(next as Section)}
+                        translating={translating}
+                        onChange={(next: Obj) => editor.update((d) => editSection(d, lang, next as Section))}
                       />
                     </section>
                   ) : null}
@@ -203,7 +253,14 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
 
               <TabsContent value="site" className="min-h-0 flex-1 overflow-y-auto">
                 <div className="p-3">
-                  <SiteForm doc={doc} update={editor.update} />
+                  <SiteForm
+                    doc={doc}
+                    update={editor.update}
+                    lang={lang}
+                    translatingTo={translatingTo}
+                    onTranslate={translateInto}
+                    onOpenLanguage={openLanguage}
+                  />
                 </div>
               </TabsContent>
             </Tabs>
@@ -242,10 +299,12 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
             </div>
             <div className="min-h-0 flex-1">
               <Preview
-                doc={doc}
+                doc={viewDoc}
                 device={device}
                 hostname={`${siteSlug}.sites.shofar.io`}
                 focusSectionId={tab === "sections" ? (selected?.id ?? null) : null}
+                languageLinks={languageLinks}
+                onSelectLanguage={setEditingLang}
               />
             </div>
           </main>
@@ -255,6 +314,7 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
           open={publishOpen}
           busy={exporting}
           site={site}
+          doc={doc}
           onOpenChange={setPublishOpen}
           onDownload={() => void handleExport()}
           onSiteChange={editor.updateSite}

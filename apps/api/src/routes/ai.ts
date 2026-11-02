@@ -3,17 +3,20 @@ import {
   AiDraftRequest,
   AiRewriteRequest,
   AiThemeRequest,
+  AiTranslateRequest,
   SiteDocument,
   Theme,
+  TranslationOverlay,
   type AiAction,
   type AiAltTextResponse,
   type AiDraftResponse,
   type AiRewriteResponse,
   type AiThemeResponse,
+  type AiTranslateResponse,
   type AiUsageResponse,
 } from "@ministry/schema";
 import { templates } from "@ministry/templates";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { Context } from "hono";
 import { Hono } from "hono";
@@ -23,8 +26,9 @@ import { isSiteAssetKey, loadAuthorizedSite } from "../access";
 import { AiProviderError, createProvider, type AiCallUsage, type AiProvider } from "../ai";
 import type { TemplateChoice } from "../ai/provider";
 import { dailyLimit, usedToday, utcDayWindow } from "../ai/usage";
-import { aiUsage, organizations, siteVersions, type Site } from "../db/schema";
+import { aiUsage, organizations, siteVersions, sites, type Site } from "../db/schema";
 import { newId } from "../ids";
+import { LANGUAGE_PATH_PATTERN } from "../published";
 import type { AppEnv } from "../types";
 
 const MAX_AI_BODY_BYTES = 32 * 1024;
@@ -267,5 +271,86 @@ aiRoutes.post("/sites/:id/ai/alt-text", tooLarge, async (c) => {
 
   await drizzle(c.env.DB).insert(aiUsage).values(usageRow(c.var.user.id, g.site.id, "alt_text", result.usage));
   const response: AiAltTextResponse = { alt: result.alt };
+  return c.json(response);
+});
+
+async function currentDocument(db: ReturnType<typeof drizzle>, site: Site): Promise<SiteDocument | null> {
+  if (!site.currentVersionId) return null;
+  const [version] = await db
+    .select({ document: siteVersions.document })
+    .from(siteVersions)
+    .where(eq(siteVersions.id, site.currentVersionId))
+    .limit(1);
+  const parsed = version ? SiteDocument.safeParse(JSON.parse(version.document)) : null;
+  return parsed?.success ? parsed.data : null;
+}
+
+aiRoutes.post("/sites/:id/ai/translate", tooLarge, async (c) => {
+  const g = await guard(c);
+  if (g instanceof Response) return g;
+  const body = await parseBody(c, AiTranslateRequest);
+  if (body instanceof Response) return body;
+
+  const db = drizzle(c.env.DB);
+  const document = await currentDocument(db, g.site);
+  if (!document) return c.json({ error: "Site has no valid content to translate" }, 409);
+  const language = body.language;
+  // The language becomes a URL path segment on the published site, so it must be a plain language code.
+  if (!LANGUAGE_PATH_PATTERN.test(language)) return c.json({ error: "Invalid language code" }, 400);
+  if (language === document.meta.language) {
+    return c.json({ error: "That is already the site's main language" }, 400);
+  }
+
+  const result = await callProvider(c, "translate", () =>
+    g.provider.translate({ document, targetLanguage: language, sourceLanguage: document.meta.language }),
+  );
+  if (result instanceof Response) return result;
+
+  // Tokens were spent whether or not the output was usable, so the call counts against the quota.
+  const usage = db.insert(aiUsage).values(usageRow(c.var.user.id, g.site.id, "translate", result.usage));
+  const overlay = TranslationOverlay.safeParse(result.overlay);
+  if (!overlay.success) {
+    console.error("Invalid AI translation", describeIssues(overlay.error));
+    await usage;
+    return c.json({ error: "The AI returned a translation we could not use. Please try again." }, 502);
+  }
+
+  // The model call takes a while; do not overwrite edits saved in the meantime.
+  const [latest] = await db.select({ id: sites.currentVersionId }).from(sites).where(eq(sites.id, g.site.id)).limit(1);
+  if (latest?.id !== g.site.currentVersionId) {
+    await usage;
+    return c.json({ error: "The site changed while it was being translated. Please try again." }, 409);
+  }
+
+  const next = SiteDocument.safeParse({
+    ...document,
+    meta: {
+      ...document.meta,
+      languages: document.meta.languages.includes(language) ? document.meta.languages : [...document.meta.languages, language],
+    },
+    translations: { ...document.translations, [language]: overlay.data },
+  });
+  if (!next.success) {
+    console.error("Translated document is invalid", describeIssues(next.error));
+    await usage;
+    return c.json({ error: "The translation could not be added to this site." }, 502);
+  }
+
+  const versionId = newId("ver");
+  await db.batch([
+    db.insert(siteVersions).values({
+      id: versionId,
+      siteId: g.site.id,
+      document: JSON.stringify(next.data),
+      createdBy: c.var.user.id,
+    }),
+    db
+      .update(sites)
+      .set({ currentVersionId: versionId, updatedAt: sql`(unixepoch() * 1000)` })
+      .where(eq(sites.id, g.site.id)),
+    usage,
+  ]);
+
+  const response: AiTranslateResponse = { language, overlay: overlay.data };
   return c.json(response);
 });

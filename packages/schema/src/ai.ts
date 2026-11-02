@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SiteDocument, Theme } from "./site.ts";
+import { SiteDocument, Theme, TranslationOverlay } from "./site.ts";
 
 /**
  * Contract for the AI copilot endpoints. The API validates requests with
@@ -7,7 +7,7 @@ import { SiteDocument, Theme } from "./site.ts";
  * this file; never redefine the shapes locally.
  */
 
-export const AI_ACTIONS = ["draft", "rewrite", "theme", "alt_text"] as const;
+export const AI_ACTIONS = ["draft", "rewrite", "theme", "alt_text", "translate"] as const;
 export type AiAction = (typeof AI_ACTIONS)[number];
 
 /** Preset instructions the editor offers on text fields; custom text is also allowed. */
@@ -82,3 +82,12 @@ export const AiUsageResponse = z.object({
   available: z.boolean(),
 });
 export type AiUsageResponse = z.infer<typeof AiUsageResponse>;
+
+export const AiTranslateRequest = z.object({
+  /** Target language code, e.g. "en" or "es". Must differ from the primary language. */
+  language: z.string().min(2).max(10),
+});
+export type AiTranslateRequest = z.infer<typeof AiTranslateRequest>;
+
+export const AiTranslateResponse = z.object({ language: z.string(), overlay: TranslationOverlay });
+export type AiTranslateResponse = z.infer<typeof AiTranslateResponse>;

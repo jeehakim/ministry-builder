@@ -1,5 +1,6 @@
 import { emptySiteDocument, type SiteDocument, type Theme } from "@ministry/schema";
 import type { AiCallUsage, AiProvider } from "./provider";
+import { extractTranslatable, mapStrings } from "./translatable";
 
 const USAGE: AiCallUsage = { inputTokens: 100, outputTokens: 200, model: "fake-model", provider: "fake" };
 
@@ -60,6 +61,11 @@ export function createFakeProvider(): AiProvider {
 
     async altText() {
       return { alt: "People gathered together at a community event", usage: USAGE };
+    },
+
+    async translate(input) {
+      const prefix = `[${input.targetLanguage}] `;
+      return { overlay: mapStrings(extractTranslatable(input.document), (s) => `${prefix}${s}`), usage: USAGE };
     },
   };
 }

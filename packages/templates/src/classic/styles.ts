@@ -20,6 +20,9 @@ p{margin:0 0 1em}
 .site-nav{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:.95rem}
 .site-nav a{text-decoration:none;color:inherit;opacity:.85}
 .site-nav a:hover{opacity:1;text-decoration:underline}
+.lang-switch{display:flex;gap:4px;font-size:.85rem}
+.lang-switch a{padding:4px 8px;border-radius:999px;text-decoration:none;color:inherit;opacity:.75}
+.lang-switch a[aria-current]{background:rgba(0,0,0,.08);opacity:1;font-weight:600}
 .section{padding:64px 0}
 .section + .section{border-top:1px solid rgba(0,0,0,.06)}
 .hero{position:relative;color:#fff;background:var(--primary);padding:96px 0}

@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { siteLanguages, type SiteDocument } from "@ministry/schema";
 import { Check, ChevronDown, Copy, Download, ExternalLink, Globe, Loader2, Rocket } from "lucide-react";
 import { toast } from "sonner";
 import type { SiteInfo } from "../api";
 import { useBackend } from "../backend-context";
 import { useSiteId } from "../editor/EditorContext";
+import { languageUrls } from "../lib/languages";
 import { formatRelativeTime } from "../lib/time";
 import { safeHttpUrl } from "../lib/urls";
 import { Button } from "@/components/ui/button";
@@ -48,13 +50,47 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+/** The address of each language version, shown once the site is live and has more than one language. */
+function LanguageAddresses({ liveUrl, doc }: { liveUrl: string; doc: SiteDocument }) {
+  if (siteLanguages(doc).length < 2) return null;
+  return (
+    <div className="space-y-1.5 border-t pt-2">
+      <p id="publish-languages" className="text-xs font-medium text-muted-foreground">
+        Addresses by language
+      </p>
+      <ul aria-labelledby="publish-languages" className="space-y-1.5">
+        {languageUrls(liveUrl, doc).map((l) => (
+          <li key={l.code} className="flex items-center justify-between gap-2">
+            <span className="min-w-0">
+              <span className="block text-xs text-muted-foreground">
+                {l.label}
+                {l.primary ? " (main)" : ""}
+              </span>
+              <a
+                href={l.url}
+                target="_blank"
+                rel="noreferrer"
+                className="block truncate rounded-sm text-sm text-brand underline-offset-4 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+              >
+                {l.url}
+              </a>
+            </span>
+            <CopyButton text={l.url} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** Section (a): one-click publishing on Ministry Sites. Only rendered when the backend supports it. */
 function HostedPublish(props: {
   site: SiteInfo;
+  doc: SiteDocument;
   onSiteChange: (patch: Partial<SiteInfo>) => void;
   beforePublish: () => Promise<void>;
 }) {
-  const { site, onSiteChange, beforePublish } = props;
+  const { site, doc, onSiteChange, beforePublish } = props;
   const backend = useBackend();
   const siteId = useSiteId();
   const [working, setWorking] = useState<"publish" | "unpublish" | null>(null);
@@ -130,6 +166,7 @@ function HostedPublish(props: {
               </a>
             </Button>
           </div>
+          <LanguageAddresses liveUrl={liveUrl} doc={doc} />
         </div>
       ) : null}
 
@@ -220,13 +257,15 @@ export function PublishModal(props: {
   /** True while the ZIP is being built. */
   busy: boolean;
   site: SiteInfo;
+  /** The document being edited, for the language addresses. */
+  doc: SiteDocument;
   onOpenChange: (open: boolean) => void;
   onDownload: () => void;
   onSiteChange: (patch: Partial<SiteInfo>) => void;
   /** Saves pending edits and resolves when they are stored; rejects if they cannot be. */
   beforePublish: () => Promise<void>;
 }) {
-  const { open, busy, site, onOpenChange, onDownload, onSiteChange, beforePublish } = props;
+  const { open, busy, site, doc, onOpenChange, onDownload, onSiteChange, beforePublish } = props;
   const backend = useBackend();
   const canHost = backend.publish !== undefined;
   return (
@@ -243,7 +282,7 @@ export function PublishModal(props: {
         </DialogHeader>
         {canHost ? (
           <>
-            <HostedPublish site={site} onSiteChange={onSiteChange} beforePublish={beforePublish} />
+            <HostedPublish site={site} doc={doc} onSiteChange={onSiteChange} beforePublish={beforePublish} />
             <Separator />
           </>
         ) : null}

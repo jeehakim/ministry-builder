@@ -317,6 +317,33 @@ describe("hosting on a custom domain", () => {
     expect((await hosted("https://lonely.org/")).status).toBe(404);
   });
 
+  it("serves language pages at /<lang>/ on the custom domain with Content-Language", async () => {
+    const site = await makeSite("dom_m", "Multilingual Domain");
+    const doc = emptySiteDocument("Multilingual Domain");
+    doc.meta.language = "ko";
+    expect((await call("dom_m", `/sites/${site.id}/document`, jsonInit("PUT", doc))).status).toBe(200);
+    expect((await call("dom_m", `/sites/${site.id}/ai/translate`, jsonInit("POST", { language: "en" }))).status).toBe(200);
+    expect((await call("dom_m", `/sites/${site.id}/publish`, { method: "POST" })).status).toBe(200);
+    await addDomain("dom_m", site.id, "multilingual.org");
+
+    const primary = await hosted("https://multilingual.org/");
+    expect(primary.status).toBe(200);
+    expect(primary.headers.get("content-language")).toBe("ko");
+    expect(await primary.text()).toContain('hreflang="en" href="en/"');
+
+    const english = await hosted("https://multilingual.org/en/");
+    expect(english.status).toBe(200);
+    expect(english.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(english.headers.get("content-language")).toBe("en");
+    expect(await english.text()).toContain('hreflang="ko" href="../"');
+
+    const redirected = await hosted("https://multilingual.org/en?ref=x", { redirect: "manual" });
+    expect(redirected.status).toBe(301);
+    expect(redirected.headers.get("location")).toBe("/en/?ref=x");
+    expect((await hosted("https://multilingual.org/fr/")).status).toBe(404);
+    expect((await hosted("https://multilingual.org/en/index.html")).status).toBe(404);
+  });
+
   it("lets unknown hosts and the API host fall through to the API", async () => {
     expect((await hosted("https://api.build.shofar.io/health")).status).toBe(200);
     expect((await hosted("https://nobody.example/health")).status).toBe(200);
