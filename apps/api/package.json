@@ -12,13 +12,15 @@
     "db:migrate:local": "wrangler d1 migrations apply ministry-sites --local"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.4.0",
     "@clerk/backend": "^3.26.5",
     "@ministry/schema": "workspace:*",
     "@ministry/templates": "workspace:*",
     "drizzle-orm": "^0.45.4",
     "hono": "^4.13.16",
     "openai": "^7.47.0",
-    "zod": "^3.24.1"
+    "zod": "^3.24.1",
+    "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.5.0",

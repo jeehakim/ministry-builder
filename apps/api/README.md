@@ -67,7 +67,10 @@ Errors are `{ "error": string }`. A site you may not access answers 404, same as
 | Name | How to set | Used for |
 |---|---|---|
 | `CLERK_SECRET_KEY` | `npx wrangler secret put CLERK_SECRET_KEY`, or dashboard: Settings > Variables and Secrets > Add (type Secret) | Verifying Clerk session tokens |
-| `OPENAI_API_KEY` | same, name `OPENAI_API_KEY` | AI copilot. Without it the AI routes answer 503. Model comes from the `OPENAI_MODEL` var |
+| `OPENAI_API_KEY` | same, name `OPENAI_API_KEY` | AI copilot on OpenAI. Model comes from the `OPENAI_MODEL` var |
+| `ANTHROPIC_API_KEY` | same, name `ANTHROPIC_API_KEY` | AI copilot on Claude (key from console.anthropic.com; a Claude.ai subscription does not work). Model comes from the `ANTHROPIC_MODEL` var (default `claude-opus-5-5`; set `claude-sonnet-5-5` or `claude-haiku-5-5` to spend less) |
 | `STAFF_API_TOKEN` | same, name `STAFF_API_TOKEN` | Optional. Requests with header `X-Staff-Token: <value>` act as the admin user `staff-bot` |
 
-`GET /health` returns `{ "ok": true, "ai": true|false }` so you can confirm the AI key is present without exposing it. Secrets added in the dashboard survive `wrangler deploy`; plain-text variables defined in `wrangler.jsonc` are the source of truth for non-secret settings.
+Without either AI key the AI routes answer 503. When only one key is set it is used; when both are set OpenAI wins unless the `AI_PROVIDER` var is `anthropic` (or `openai`). Setting `AI_PROVIDER` to a provider whose key is missing disables the copilot rather than falling back. Both adapters live in `src/ai/` behind the same `AiProvider` interface; the Anthropic one uses structured outputs (`output_config.format`) so the JSON matches the schema's shape, and both validate with Zod and allow one repair round.
+
+`GET /health` returns `{ "ok": true, "ai": true|false }` (true when either AI key is present) so you can confirm a key is set without exposing it. Secrets added in the dashboard survive `wrangler deploy`; plain-text variables defined in `wrangler.jsonc` are the source of truth for non-secret settings.

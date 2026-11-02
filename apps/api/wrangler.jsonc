@@ -16,8 +16,10 @@
   "vars": {
     // Origin of the web app allowed by CORS. Override per environment.
     "ALLOWED_ORIGIN": "https://build.shofar.io",
-    // Chat model used by the AI copilot. Overridable per environment.
+    // Chat model used by the AI copilot on OpenAI. Overridable per environment.
     "OPENAI_MODEL": "gpt-5-mini",
+    // Claude model used by the AI copilot on Anthropic (AI_PROVIDER=anthropic or only ANTHROPIC_API_KEY set).
+    "ANTHROPIC_MODEL": "claude-opus-5-5",
     // AI calls allowed per user per UTC day.
     "AI_DAILY_LIMIT": "30",
     // Hostname that serves published sites (path form: sites.shofar.io/<slug>/).

@@ -1,8 +1,15 @@
 CLERK_SECRET_KEY=
 # OpenAI key for the AI copilot (optional until Phase 1 ships). Production value lives on the Worker as a secret.
 OPENAI_API_KEY=
-# Chat model for the AI copilot. wrangler.jsonc sets the default (gpt-5-mini); uncomment to override locally.
+# Chat model for the AI copilot on OpenAI. wrangler.jsonc sets the default (gpt-5-mini); uncomment to override locally.
 # OPENAI_MODEL=gpt-5-mini
+# Claude API key (console.anthropic.com) to run the copilot on Claude instead. Used when OPENAI_API_KEY is
+# empty, or always when AI_PROVIDER=anthropic. Production value lives on the Worker as a secret.
+ANTHROPIC_API_KEY=
+# Claude model for the copilot. wrangler.jsonc sets the default (claude-opus-5-5); uncomment to override locally.
+# ANTHROPIC_MODEL=claude-opus-5-5
+# Pick the provider explicitly when both keys are set: openai (default) or anthropic.
+# AI_PROVIDER=anthropic
 # AI calls allowed per user per UTC day (default 30 from wrangler.jsonc).
 # AI_DAILY_LIMIT=30
 # Shared token for staff automation. Send it as the X-Staff-Token header to act as the admin user "staff-bot".

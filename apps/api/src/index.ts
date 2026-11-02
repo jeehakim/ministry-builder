@@ -26,7 +26,7 @@ app.use(
 );
 
 // Reports which optional integrations are configured, never their values.
-app.get("/health", (c) => c.json({ ok: true, ai: Boolean(c.env.OPENAI_API_KEY) }));
+app.get("/health", (c) => c.json({ ok: true, ai: Boolean(c.env.OPENAI_API_KEY || c.env.ANTHROPIC_API_KEY) }));
 
 // Everything under /sites, /ai, /admin and /orgs needs a signed-in user (or the staff token).
 // GET /assets/* stays public.
