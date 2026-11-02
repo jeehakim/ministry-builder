@@ -35,12 +35,17 @@ export function FieldsForm(props: {
   onChange: (next: Obj) => void;
   /** Section type such as "hero"; when set, text fields get AI rewrite buttons that know where the text lives. */
   sectionType?: string;
+  /**
+   * Editing a translation: only text can change. Images, link targets, and adding,
+   * removing or reordering items are locked, because they are shared by every language.
+   */
+  translating?: boolean;
 }) {
-  const { value, fields, onChange, sectionType } = props;
+  const { value, fields, onChange, sectionType, translating = false } = props;
   return (
     <div className="space-y-4">
       {fields.map((field) => (
-        <FieldView key={field.key} field={field} value={value} onChange={onChange} sectionType={sectionType} />
+        <FieldView key={field.key} field={field} value={value} onChange={onChange} sectionType={sectionType} translating={translating} />
       ))}
     </div>
   );
@@ -51,11 +56,13 @@ function FieldView({
   value,
   onChange,
   sectionType,
+  translating,
 }: {
   field: FieldSpec;
   value: Obj;
   onChange: (next: Obj) => void;
   sectionType?: string;
+  translating: boolean;
 }) {
   const current = value[field.key];
   const reduced = useReducedMotion();
@@ -69,6 +76,7 @@ function FieldView({
           multiline={field.multiline}
           placeholder={field.placeholder}
           assist={sectionType ? { context: `${sectionType} ${field.label}` } : undefined}
+          disabled={translating && field.fixed === true}
           onChange={(text) => onChange(withKey(value, field.key, field.optional && text === "" ? undefined : text))}
         />
       );
@@ -78,12 +86,15 @@ function FieldView({
         <ImageField
           label={field.label}
           value={isImageRef(current) ? current : undefined}
+          locked={translating}
           onChange={(image) => onChange(withKey(value, field.key, image))}
         />
       );
 
     case "link": {
       if (!isObj(current)) {
+        // A link that does not exist yet is a layout change, which a translation cannot make.
+        if (translating) return null;
         return (
           <Button
             type="button"
@@ -109,6 +120,7 @@ function FieldView({
               variant="ghost"
               size="icon-xs"
               aria-label={`Remove ${field.label}`}
+              disabled={translating}
               onClick={() => onChange(withKey(value, field.key, undefined))}
             >
               <X />
@@ -125,6 +137,7 @@ function FieldView({
               aria-label={`${field.label} link`}
               placeholder="https://… or #section"
               value={str(current.href)}
+              disabled={translating}
               onChange={(e) => onChange(withKey(value, field.key, { ...current, href: e.target.value }))}
             />
           </div>
@@ -152,7 +165,7 @@ function FieldView({
               {field.label}
               {items.length ? <span className="rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground">{items.length}</span> : null}
             </Label>
-            <Button type="button" variant="outline" size="xs" onClick={() => setItems([...items, { ...field.blank }])}>
+            <Button type="button" variant="outline" size="xs" disabled={translating} onClick={() => setItems([...items, { ...field.blank }])}>
               <Plus />
               {field.itemLabel}
             </Button>
@@ -179,7 +192,7 @@ function FieldView({
                         variant="ghost"
                         size="icon-xs"
                         aria-label={`Move ${field.itemLabel.toLowerCase()} ${index + 1} up`}
-                        disabled={index === 0}
+                        disabled={translating || index === 0}
                         onClick={() => move(index, -1)}
                       >
                         <ArrowUp />
@@ -189,7 +202,7 @@ function FieldView({
                         variant="ghost"
                         size="icon-xs"
                         aria-label={`Move ${field.itemLabel.toLowerCase()} ${index + 1} down`}
-                        disabled={index === items.length - 1}
+                        disabled={translating || index === items.length - 1}
                         onClick={() => move(index, 1)}
                       >
                         <ArrowDown />
@@ -200,6 +213,7 @@ function FieldView({
                         size="icon-xs"
                         className="text-muted-foreground hover:text-destructive"
                         aria-label={`Delete ${field.itemLabel.toLowerCase()} ${index + 1}`}
+                        disabled={translating}
                         onClick={() => setItems(items.filter((_, i) => i !== index))}
                       >
                         <Trash2 />
@@ -210,6 +224,7 @@ function FieldView({
                     value={item}
                     fields={field.fields}
                     sectionType={sectionType}
+                    translating={translating}
                     onChange={(next) => setItems(items.map((it, i) => (i === index ? next : it)))}
                   />
                 </motion.li>

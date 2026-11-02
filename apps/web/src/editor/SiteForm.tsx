@@ -1,12 +1,14 @@
-import type { Meta, SiteDocument, Theme } from "@ministry/schema";
+import { useMemo } from "react";
+import { localizeDocument, type Meta, type SiteDocument, type Theme } from "@ministry/schema";
 import { templates } from "@ministry/templates";
 import { ColorField, SelectField, TextField } from "../components/Field";
 import { ImageField } from "../components/ImageField";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { mergeTheme } from "./documentOps";
+import { editMetaText, mergeTheme } from "./documentOps";
 import { FONT_PAIRS, findFontPair } from "./fontPairs";
+import { LanguagesPanel } from "./LanguagesPanel";
 import { ThemeReference } from "./ThemeReference";
 
 const HERO_STYLES: { value: Theme["heroStyle"]; label: string }[] = [
@@ -27,8 +29,20 @@ function isRadius(v: string): v is Theme["radius"] {
   return RADII.some((s) => s.value === v);
 }
 
-export function SiteForm({ doc, update }: { doc: SiteDocument; update: (fn: (d: SiteDocument) => SiteDocument) => void }) {
-  const { meta, theme } = doc;
+export function SiteForm(props: {
+  doc: SiteDocument;
+  update: (fn: (d: SiteDocument) => SiteDocument) => void;
+  /** The language being edited; anything other than the primary is a translation. */
+  lang: string;
+  translatingTo: string | null;
+  onTranslate: (code: string) => Promise<boolean>;
+  onOpenLanguage: (code: string) => void;
+}) {
+  const { doc, update, lang, translatingTo, onTranslate, onOpenLanguage } = props;
+  const translating = lang !== doc.meta.language;
+  const view = useMemo(() => localizeDocument(doc, lang), [doc, lang]);
+  const { theme } = doc;
+  const meta = view.meta;
   const setMeta = (patch: Partial<Meta>) => update((d) => ({ ...d, meta: { ...d.meta, ...patch } }));
   const setTheme = (patch: Partial<Theme>) => update((d) => ({ ...d, theme: { ...d.theme, ...patch } }));
 
@@ -50,6 +64,7 @@ export function SiteForm({ doc, update }: { doc: SiteDocument; update: (fn: (d: 
         <TextField
           label="Name"
           value={meta.orgName}
+          disabled={translating}
           assist={{ context: "organization name" }}
           onChange={(orgName) => setMeta({ orgName })}
         />
@@ -57,30 +72,25 @@ export function SiteForm({ doc, update }: { doc: SiteDocument; update: (fn: (d: 
           label="Tagline"
           value={meta.tagline}
           assist={{ context: "organization tagline" }}
-          onChange={(tagline) => setMeta({ tagline })}
+          onChange={(tagline) => update((d) => editMetaText(d, lang, { tagline }))}
         />
         <TextField
           label="Description for search engines"
           multiline
           value={meta.description}
           assist={{ context: "search engine description" }}
-          onChange={(description) => setMeta({ description })}
+          onChange={(description) => update((d) => editMetaText(d, lang, { description }))}
         />
-        <ImageField label="Logo" value={meta.logo} onChange={(logo) => setMeta({ logo })} />
-        <div className="grid grid-cols-2 gap-3">
-          <TextField label="Language code" value={meta.language} onChange={(language) => setMeta({ language })} />
-          <TextField
-            label="Second language (optional)"
-            value={meta.secondaryLanguage ?? ""}
-            placeholder="ko"
-            onChange={(v) => setMeta({ secondaryLanguage: v === "" ? undefined : v })}
-          />
-        </div>
+        <ImageField label="Logo" value={meta.logo} locked={translating} lockAlt={translating} onChange={(logo) => setMeta({ logo })} />
       </section>
 
       <Separator />
 
-      <section aria-labelledby="site-theme" className="space-y-4">
+      <LanguagesPanel doc={doc} update={update} translatingTo={translatingTo} onTranslate={onTranslate} onOpenLanguage={onOpenLanguage} />
+
+      <Separator />
+
+      <fieldset disabled={translating} aria-labelledby="site-theme" className="min-w-0 space-y-4 border-0 p-0 disabled:opacity-60">
         <div>
           <h2 id="site-theme" className="text-sm font-semibold">
             Design
@@ -149,7 +159,7 @@ export function SiteForm({ doc, update }: { doc: SiteDocument; update: (fn: (d: 
             ))}
           </ToggleGroup>
         </div>
-      </section>
+      </fieldset>
     </div>
   );
 }

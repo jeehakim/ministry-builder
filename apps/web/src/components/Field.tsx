@@ -15,8 +15,10 @@ export function TextField(props: {
   hint?: ReactNode;
   /** Adds an AI rewrite button. `context` tells the model where the text lives, e.g. "hero Heading". */
   assist?: { context: string };
+  /** Shows the value but does not let it change (and hides the AI button). */
+  disabled?: boolean;
 }) {
-  const { label, value, onChange, multiline, placeholder, hint, assist } = props;
+  const { label, value, onChange, multiline, placeholder, hint, assist, disabled } = props;
   const id = useId();
   const { ai } = useAi();
   const labelEl = (
@@ -26,7 +28,7 @@ export function TextField(props: {
   );
   return (
     <div className="space-y-1.5">
-      {assist && ai ? (
+      {assist && ai && !disabled ? (
         <div className="flex min-h-6 items-center justify-between gap-2">
           {labelEl}
           <AiAssist label={label} value={value} context={assist.context} onApply={onChange} />
@@ -40,10 +42,11 @@ export function TextField(props: {
           className="min-h-24 resize-y"
           value={value}
           placeholder={placeholder}
+          disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
         />
       ) : (
-        <Input id={id} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+        <Input id={id} value={value} placeholder={placeholder} disabled={disabled} onChange={(e) => onChange(e.target.value)} />
       )}
       {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
     </div>
@@ -55,6 +58,7 @@ export function SelectField(props: {
   value: string;
   options: { value: string; label: string; disabled?: boolean }[];
   onChange: (value: string) => void;
+  disabled?: boolean;
 }) {
   const id = useId();
   return (
@@ -62,7 +66,7 @@ export function SelectField(props: {
       <Label htmlFor={id} className="text-xs text-muted-foreground">
         {props.label}
       </Label>
-      <Select value={props.value} onValueChange={props.onChange}>
+      <Select value={props.value} onValueChange={props.onChange} disabled={props.disabled}>
         <SelectTrigger id={id} className="w-full">
           <SelectValue />
         </SelectTrigger>

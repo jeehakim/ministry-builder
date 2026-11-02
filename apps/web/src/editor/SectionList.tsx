@@ -48,10 +48,12 @@ type Props = {
   onToggleHidden: (id: string) => void;
   onDelete: (id: string) => void;
   onAdd: (type: SectionType) => void;
+  /** Editing a translation: selecting still works, but adding, hiding, moving and deleting do not. */
+  locked?: boolean;
 };
 
 export function SectionList(props: Props) {
-  const { sections, selectedId, onSelect, onMove, onReorder, onToggleHidden, onDelete, onAdd } = props;
+  const { sections, selectedId, onSelect, onMove, onReorder, onToggleHidden, onDelete, onAdd, locked = false } = props;
   const [pendingDelete, setPendingDelete] = useState<Section | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -69,7 +71,7 @@ export function SectionList(props: Props) {
         <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Sections</h2>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" disabled={locked}>
               <Plus />
               Add
             </Button>
@@ -100,6 +102,7 @@ export function SectionList(props: Props) {
                 section={s}
                 index={i}
                 count={sections.length}
+                locked={locked}
                 selected={s.id === selectedId}
                 onSelect={() => onSelect(s.id)}
                 onMove={(dir) => onMove(s.id, dir)}
@@ -150,13 +153,14 @@ function Row(props: {
   section: Section;
   index: number;
   count: number;
+  locked: boolean;
   selected: boolean;
   onSelect: () => void;
   onMove: (dir: -1 | 1) => void;
   onToggleHidden: () => void;
   onDelete: () => void;
 }) {
-  const { section: s, index, count, selected, onSelect, onMove, onToggleHidden, onDelete } = props;
+  const { section: s, index, count, locked, selected, onSelect, onMove, onToggleHidden, onDelete } = props;
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: s.id });
   const Icon = SECTION_ICONS[s.type];
   const title = sectionTitle(s);
@@ -175,7 +179,8 @@ function Row(props: {
         ref={setActivatorNodeRef}
         type="button"
         aria-label={`Drag to reorder ${title}`}
-        className="flex h-10 w-6 shrink-0 cursor-grab items-center justify-center text-muted-foreground/60 outline-none hover:text-foreground focus-visible:text-foreground active:cursor-grabbing"
+        disabled={locked}
+        className="flex h-10 w-6 shrink-0 cursor-grab items-center justify-center text-muted-foreground/60 outline-none hover:text-foreground focus-visible:text-foreground active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-40"
         {...attributes}
         {...listeners}
       >
@@ -211,6 +216,7 @@ function Row(props: {
             size="icon-sm"
             aria-label={`${s.hidden ? "Show" : "Hide"} ${title}`}
             aria-pressed={s.hidden}
+            disabled={locked}
             onClick={onToggleHidden}
             className={cn("text-muted-foreground", !s.hidden && "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100")}
           >
@@ -221,7 +227,7 @@ function Row(props: {
       </Tooltip>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon-sm" aria-label={`More actions for ${title}`} className="text-muted-foreground">
+          <Button variant="ghost" size="icon-sm" aria-label={`More actions for ${title}`} disabled={locked} className="text-muted-foreground">
             <MoreHorizontal />
           </Button>
         </DropdownMenuTrigger>

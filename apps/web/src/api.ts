@@ -3,11 +3,13 @@ import {
   AiDraftResponse,
   AiRewriteResponse,
   AiThemeResponse,
+  AiTranslateResponse,
   AiUsageResponse,
   SiteDocument,
   type AiDraftRequest,
   type AiRewriteRequest,
   type AiThemeRequest,
+  type AiTranslateRequest,
 } from "@ministry/schema";
 import { API_URL } from "./env";
 
@@ -74,6 +76,8 @@ const UPLOAD_TIMEOUT_MS = 60_000;
 const AI_TIMEOUT_MS = 45_000;
 /** Drafting writes up to three full pages and can take 30 to 90 seconds. */
 const AI_DRAFT_TIMEOUT_MS = 120_000;
+/** Translating a whole page is a single large generation. */
+const AI_TRANSLATE_TIMEOUT_MS = 90_000;
 
 export interface ApiClient {
   listSites(): Promise<SiteSummary[]>;
@@ -88,6 +92,7 @@ export interface ApiClient {
   aiRewrite(siteId: string, body: AiRewriteRequest): Promise<AiRewriteResponse>;
   aiTheme(siteId: string, body: AiThemeRequest): Promise<AiThemeResponse>;
   aiAltText(siteId: string, assetKey: string): Promise<AiAltTextResponse>;
+  aiTranslate(siteId: string, language: string): Promise<AiTranslateResponse>;
 }
 
 type ErrorFactory = (status: number, message: string, body: unknown) => ApiError;
@@ -235,6 +240,10 @@ export function createApiClient(getToken: GetToken, baseUrl: string = API_URL): 
     },
     aiAltText(siteId, assetKey) {
       return aiRequest(`${sitePath(siteId)}/ai/alt-text`, AiAltTextResponse, json("POST", { assetKey }), AI_TIMEOUT_MS);
+    },
+    aiTranslate(siteId, language) {
+      const body: AiTranslateRequest = { language };
+      return aiRequest(`${sitePath(siteId)}/ai/translate`, AiTranslateResponse, json("POST", body), AI_TRANSLATE_TIMEOUT_MS);
     },
   };
 }
