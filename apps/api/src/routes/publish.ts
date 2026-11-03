@@ -1,11 +1,12 @@
 import type { ImageRef } from "@ministry/schema";
-import { languageName, localizeDocument, SiteDocument, siteLanguages } from "@ministry/schema";
-import { renderSite, renderThanksPage, type RenderOptions } from "@ministry/templates";
-import { and, asc, eq, gte, lt } from "drizzle-orm";
+import { donorDisplayName, languageName, localizeCampaign, localizeDocument, SiteDocument, siteLanguages, type CampaignWithTotals } from "@ministry/schema";
+import { renderCampaignPage, renderSite, renderThanksPage, type CampaignCard, type RenderOptions } from "@ministry/templates";
+import { and, asc, desc, eq, gte, inArray, lt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { isSiteAssetKey, requireSiteRole } from "../access";
-import { publishEvents, siteVersions, sites } from "../db/schema";
+import { loadCampaigns } from "../campaigns";
+import { gifts, publishEvents, siteVersions, sites } from "../db/schema";
 import { orgEventInsert } from "../events";
 import { newId } from "../ids";
 import { limitsFor, PUBLISH_WINDOW_MS } from "../limits";
@@ -17,8 +18,10 @@ import {
   LANGUAGE_PATH_PATTERN,
   LANGUAGE_TAG_PATTERN,
   listKeys,
+  publishedCampaignKey,
   publishedImagePrefix,
   publishedIndexKey,
+  publishedLanguageCampaignKey,
   publishedLanguageIndexKey,
   publishedLanguageThanksKey,
   publishedPrefix,
@@ -43,6 +46,41 @@ function imageKey(ref: ImageRef): string {
 }
 
 type LanguageLink = NonNullable<RenderOptions["languageLinks"]>[number];
+
+/** Names on the donor wall for the campaigns that enable it, newest gift first, at most this many. */
+const DONOR_WALL_LIMIT = 200;
+
+/** Switcher entries as seen from a campaign page, two folders below its language page. */
+function campaignLanguageLinksFor(languages: string[], primary: string, current: string, campaignSlug: string): LanguageLink[] {
+  if (languages.length < 2) return [];
+  const tail = `give/${campaignSlug}/`;
+  return languages.map((code) => {
+    let href: string;
+    if (code === current) href = "./";
+    else if (current === primary) href = `../../${code}/${tail}`;
+    else href = code === primary ? `../../../${tail}` : `../../../${code}/${tail}`;
+    return { code, label: languageName(code), href, current: code === current };
+  });
+}
+
+/** Opted-in donor names per campaign ("Maria L."), for the campaigns that show a wall. */
+async function donorWalls(db: ReturnType<typeof drizzle>, campaigns: CampaignWithTotals[]): Promise<Map<string, string[]>> {
+  const walls = new Map<string, string[]>();
+  const ids = campaigns.filter((c) => c.donorWallEnabled).map((c) => c.id);
+  if (ids.length === 0) return walls;
+  const rows = await db
+    .select({ campaignId: gifts.campaignId, donorName: gifts.donorName })
+    .from(gifts)
+    .where(and(inArray(gifts.campaignId, ids), eq(gifts.public, true)))
+    .orderBy(desc(gifts.receivedAt), desc(gifts.id));
+  for (const row of rows) {
+    const list = walls.get(row.campaignId) ?? [];
+    if (list.length >= DONOR_WALL_LIMIT) continue;
+    list.push(donorDisplayName(row.donorName));
+    walls.set(row.campaignId, list);
+  }
+  return walls;
+}
 
 /** Switcher entries as seen from the page of `current`: the primary page is the site root, the others sit one level down. */
 function languageLinksFor(languages: string[], primary: string, current: string): LanguageLink[] {
@@ -106,25 +144,59 @@ publishRoutes.post("/sites/:id/publish", async (c) => {
   // Absolute address of the site root on the sites host; canonical URLs, hreflang alternates and the sitemap derive from it.
   const siteUrl = publicSiteUrl(c.env, site.slug);
 
+  // Active campaigns become cards in the Give section and a page each at give/<slug>/ in every language.
+  const activeCampaigns = await loadCampaigns(db, site.id, ["active"]);
+  const walls = await donorWalls(db, activeCampaigns);
+
   // Local images are copied once under images/; absolute URLs are left as the author wrote them.
   const pages = languages.map((lang) => {
     const imagesDir = lang === primary ? "images/" : "../images/";
     const key = lang === primary ? publishedIndexKey(site.id) : publishedLanguageIndexKey(site.id, lang);
     // Sanitize after localizing: a translation overlay can replace a link target with an unsafe one.
     const localized = sanitizeDocumentForPublish(localizeDocument(doc, lang));
+    const pageUrl = languagePageUrl(siteUrl, primary, lang);
+    // Campaign text comes from staff, not from the document: control characters are the only concern (no hrefs).
+    const localizedCampaigns = activeCampaigns.map((campaign) => localizeCampaign(campaign, lang, primary));
+    const cards: CampaignCard[] = localizedCampaigns.map((campaign) => ({
+      id: campaign.id,
+      slug: campaign.slug,
+      title: campaign.title,
+      summary: campaign.summary,
+      href: `give/${campaign.slug}/`,
+      goalAmount: campaign.totals.goalAmount,
+      raisedAmount: campaign.totals.raisedAmount,
+      currency: campaign.totals.currency,
+      percent: campaign.totals.percent,
+      coverImage: campaign.coverImage,
+      deadline: campaign.deadline,
+    }));
     const rendered = renderSite(localized, {
-      canonicalUrl: languagePageUrl(siteUrl, primary, lang),
+      canonicalUrl: pageUrl,
       imageUrl: (ref) => (ABSOLUTE_URL.test(ref.src) ? ref.src : `${imagesDir}${basename(ref.src)}`),
       languageLinks: languageLinksFor(languages, primary, lang),
       // Resolves to /<slug>/contact from both /<slug>/ and /<slug>/<lang>/ (see handleContactSubmission).
       formAction: lang === primary ? "contact" : "../contact",
+      campaigns: cards,
     });
     // Both thank-you pages sit one folder below their language page, so "../" leads back to it.
     const thanksKey = lang === primary ? publishedThanksKey(site.id) : publishedLanguageThanksKey(site.id, lang);
     const thanksHtml = renderThanksPage(localized, { backHref: "../" });
-    return { lang, key, html: rendered.html, images: rendered.images, thanksKey, thanksHtml, formOrigins: externalFormOrigins(localized) };
+    // Campaign pages sit two folders below their language page (give/<slug>/).
+    const campaignImagesDir = `../../${imagesDir}`;
+    const campaignPages = localizedCampaigns.map((campaign) => {
+      const page = renderCampaignPage(localized, campaign, campaign.totals, {
+        imageUrl: (ref) => (ABSOLUTE_URL.test(ref.src) ? ref.src : `${campaignImagesDir}${basename(ref.src)}`),
+        siteHref: "../../",
+        canonicalUrl: `${pageUrl}give/${campaign.slug}/`,
+        languageLinks: campaignLanguageLinksFor(languages, primary, lang, campaign.slug),
+        donorWall: walls.get(campaign.id),
+      });
+      const campaignKey = lang === primary ? publishedCampaignKey(site.id, campaign.slug) : publishedLanguageCampaignKey(site.id, lang, campaign.slug);
+      return { key: campaignKey, html: page.html, images: page.images };
+    });
+    return { lang, key, html: rendered.html, images: rendered.images, thanksKey, thanksHtml, formOrigins: externalFormOrigins(localized), campaignPages };
   });
-  const images = pages.flatMap((page) => page.images);
+  const images = pages.flatMap((page) => [...page.images, ...page.campaignPages.flatMap((p) => p.images)]);
 
   const imagePrefix = publishedImagePrefix(site.id);
   const keep = new Set<string>();
@@ -150,6 +222,9 @@ publishRoutes.post("/sites/:id/publish", async (c) => {
     const formOrigins: Record<string, string> = page.formOrigins.length > 0 ? { formOrigins: page.formOrigins.join(" ") } : {};
     await c.env.PUBLISHED.put(page.key, relativizeRootLinks(page.html), { httpMetadata, customMetadata: { ...language, ...formOrigins } });
     await c.env.PUBLISHED.put(page.thanksKey, relativizeRootLinks(page.thanksHtml), { httpMetadata, customMetadata: language });
+    for (const campaignPage of page.campaignPages) {
+      await c.env.PUBLISHED.put(campaignPage.key, relativizeRootLinks(campaignPage.html), { httpMetadata, customMetadata: language });
+    }
   }
 
   // Crawler files sit next to index.html, so hosting only has to serve objects.
@@ -158,17 +233,22 @@ publishRoutes.post("/sites/:id/publish", async (c) => {
   });
   await c.env.PUBLISHED.put(
     publishedSitemapKey(site.id),
-    buildSitemapXml(siteUrl, pages.map((page) => page.lang)),
+    buildSitemapXml(
+      siteUrl,
+      pages.map((page) => page.lang),
+      activeCampaigns.map((campaign) => `give/${campaign.slug}/`),
+    ),
     { httpMetadata: { contentType: "application/xml; charset=utf-8" } },
   );
 
-  // Stale images, and language pages of languages that are no longer in the document.
-  const written = new Set(pages.flatMap((page) => [page.key, page.thanksKey]));
+  // Stale images, language pages of languages that are no longer in the document, and pages of campaigns
+  // that are no longer active.
+  const written = new Set(pages.flatMap((page) => [page.key, page.thanksKey, ...page.campaignPages.map((p) => p.key)]));
   const sitePrefix = publishedPrefix(site.id);
   const stale = (await listKeys(c.env.PUBLISHED, sitePrefix)).filter((key) => {
     if (key.startsWith(imagePrefix)) return !keep.has(key);
     const rest = key.slice(sitePrefix.length);
-    return /^[^/]+\/(?:thanks\/)?index\.html$/.test(rest) && !written.has(key);
+    return (/^[^/]+\/(?:thanks\/)?index\.html$/.test(rest) || /^(?:[^/]+\/)?give\/[^/]+\/index\.html$/.test(rest)) && !written.has(key);
   });
   await deleteKeys(c.env.PUBLISHED, stale);
 

@@ -20,6 +20,28 @@ export interface RenderOptions {
   canonicalUrl?: string;
   /** Language switcher entries (current one marked). Omitted or empty = no switcher. */
   languageLinks?: LanguageLink[];
+  /**
+   * Active fundraising campaigns of the site, for the cards in the Give section. Filled in by the
+   * publisher from the campaigns table; omitted in previews and exports, where no cards render.
+   */
+  campaigns?: CampaignCard[];
+}
+
+/** What a Give-section card and a campaign page need to know about a campaign. Money in minor units. */
+export interface CampaignCard {
+  id: string;
+  slug: string;
+  title: string;
+  summary: string;
+  /** Link to the campaign page, relative to the page being rendered. */
+  href: string;
+  goalAmount: number;
+  raisedAmount: number;
+  currency: string;
+  /** 0 to 100. */
+  percent: number;
+  coverImage?: ImageRef;
+  deadline?: string;
 }
 
 export interface LanguageLink {

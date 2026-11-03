@@ -49,6 +49,7 @@ import { MessagesDialog } from "./MessagesDialog";
 import { editSection, formatIssue, setTranslation } from "./documentOps";
 import { EditorHeader } from "./EditorHeader";
 import { SiteIdProvider } from "./EditorContext";
+import { GiveCampaignsPanel } from "./GiveCampaignsPanel";
 import { ContactEmailVerification } from "./ContactEmailVerification";
 import { FieldsForm } from "./FieldsForm";
 import { LanguageSwitcher } from "./LanguageSwitcher";
@@ -482,6 +483,16 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
                           onChange={(next: Obj) => editor.update((d) => editSection(d, lang, next as Section))}
                         />
                       </fieldset>
+                      {selected.type === "give" && !translating ? (
+                        <div className="mt-4">
+                          <GiveCampaignsPanel
+                            section={selected}
+                            orgId={site.orgId}
+                            readOnly={readOnly}
+                            onChange={(campaigns) => editor.update((d) => editSection(d, doc.meta.language, { ...(d.sections.find((s) => s.id === selected.id) as Section), campaigns } as Section))}
+                          />
+                        </div>
+                      ) : null}
                       {selected.type === "contact" && backend.contactEmail && !translating && !readOnly ? (
                         <ContactEmailVerification contactEmail={backend.contactEmail} email={selected.email} customEndpoint={Boolean(selected.formEndpoint?.trim())} />
                       ) : null}

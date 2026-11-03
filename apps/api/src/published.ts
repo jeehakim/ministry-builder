@@ -81,6 +81,21 @@ export function publishedLanguageThanksKey(siteId: string, lang: string): string
   return `${publishedPrefix(siteId)}${lang}/thanks/index.html`;
 }
 
+/** A campaign page in the primary language: `<site>/give/<slug>/`. Callers must check `CAMPAIGN_SLUG_PATTERN` first. */
+export function publishedCampaignKey(siteId: string, campaignSlug: string): string {
+  return `${publishedPrefix(siteId)}give/${campaignSlug}/index.html`;
+}
+
+/** A campaign page of a non-primary language. Callers must check `LANGUAGE_PATH_PATTERN` and `CAMPAIGN_SLUG_PATTERN` first. */
+export function publishedLanguageCampaignKey(siteId: string, lang: string, campaignSlug: string): string {
+  return `${publishedPrefix(siteId)}${lang}/give/${campaignSlug}/index.html`;
+}
+
+/** Absolute public URL of a campaign page on the sites host, with a trailing slash. */
+export function publicCampaignUrl(env: Pick<Bindings, "PUBLIC_SITES_HOST">, slug: string, campaignSlug: string): string {
+  return `${publicSiteUrl(env, slug)}give/${campaignSlug}/`;
+}
+
 /** Safe to send as a Content-Language header value. */
 export const LANGUAGE_TAG_PATTERN = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 

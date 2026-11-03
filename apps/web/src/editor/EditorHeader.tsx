@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { ArrowLeft, Download, Eye, Inbox, Layers, Loader2, Rocket, Settings, Sparkles } from "lucide-react";
+import { ArrowLeft, Download, Eye, HeartHandshake, Inbox, Layers, Loader2, Rocket, Settings, Sparkles } from "lucide-react";
 import type { SiteInfo } from "../api";
 import { useBackend } from "../backend-context";
 import { AiUsagePill } from "../components/AiUsagePill";
@@ -122,6 +122,19 @@ export function EditorHeader(props: {
             </span>
           ) : null}
         </Button>
+      ) : null}
+      {backend.fundraising ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button asChild variant="outline" size="sm">
+              <Link to="/fundraising">
+                <HeartHandshake />
+                Fundraising
+              </Link>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Campaigns and gifts for this organization</TooltipContent>
+        </Tooltip>
       ) : null}
       <Button variant="outline" size="sm" disabled={exporting} onClick={onExport}>
         {exporting ? <Loader2 className="animate-spin" /> : <Download />}

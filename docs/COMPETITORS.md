@@ -186,3 +186,44 @@ Search-result pages, not all opened directly. Vendor pages are marked **(V)**.
 - Non-profit website costs: https://www.elevationweb.org/blog/how-much-does-a-nonprofit-website-cost/, https://wiredimpact.com/blog/ongoing-costs-maintaining-nonprofit-website/
 - Church website costs: https://churchleaders.com/ministry-tech-leaders/381352-church-website-cost.html, https://solasites.com/posts/how-much-does-a-church-website-cost/, https://www.reachrightstudios.com/blog/church-website-cost
 - Domains: https://costgoat.com/compare/domains/org
+
+---
+
+## 7. Fundraising benchmark: Zeffy and DreamRaise (2026-11-02)
+
+Read for the Fundraising MVP (phase A, see `PLATFORM-DESIGN.md` section 3). Sources: zeffy.com home, pricing, donations, P2P, thermometer and donation-hub pages; dreamraise.io home, how-it-works, FAQ. Zeffy's `/pricing` and DreamRaise's `/pricing` were 404 at the time; `A` marks search snippets.
+
+### Zeffy
+- **Pricing and fees (V):** $0 platform, transaction and card fees; Zeffy absorbs card cost. Revenue is an optional donor tip to Zeffy at checkout ("2 out of 3 donors leave us a tip"), lowerable to zero. "Free/Basic/Premium" all show $0 with no stated differences.
+- **Campaign page (V):** goal plus live thermometer; offline gifts can be added to the total; optional public donor list and leaderboard (off switch, anonymous giving); up to four suggested amounts with per-amount notes, per-frequency sets; one-time, monthly, quarterly, yearly; peer-to-peer with team and individual pages, each with its own goal, story and URL (slug locks after first save); automatic tax receipts; customizable thank-you email; forms translatable into Spanish or French (site UI EN/FR-CA). Not mentioned: matching gifts, AI, custom domain ("not a full multi-page website with a custom domain or blog").
+- **Target (V):** all nonprofits, 100k+ organizations, North America; cause pages include churches, schools, sports teams.
+- **Website integration (V):** hosted page at zeffy.com/yournonprofit aggregating all forms; donate button (popup), embedded form, embeddable thermometer; WordPress plugin, Wix app, custom-code block for Squarespace/Webflow/GoDaddy/Weebly/Shopify; QuickBooks, Zapier, read-only API. Form URLs look like `zeffy.com/en-US/donation-form/<id>` with the locale in the path (A). No documented URL prefill (amount, name, source) found (A).
+
+### DreamRaise (dreamraise.io)
+- **What it is (V):** not a campaign-page product. A "$100,000 in 100 Days" major-donor coaching program for Christian ministry and business leaders, plus an iOS app: 300-contact list, 1 to 5 ranking (relationship, mission interest, capacity), "Wealth Prediction", pitch-deck and letter templates, map and trip planning, step tracking; optional Stripe Connect for processing.
+- **Pricing (V, FAQ):** $197 to attend the event, weekly coaching for six months, 5% commission on funds raised in that period.
+- **Campaign page features:** none of progress bar, donor wall, suggested amounts, tipping, P2P, matching, embeds, multilingual, custom domain or AI (V). Website integration: none.
+
+### Our MVP vs Zeffy vs DreamRaise
+
+| Feature | MVP (phase A) | Zeffy | DreamRaise |
+|---|---|---|---|
+| Price | plan | free + donor tip | $197 + 5% |
+| Processing | none (link out) | built in | Stripe Connect (optional) |
+| Progress bar | yes, rendered at publish | yes, live | no |
+| Offline gifts in total | yes | yes | n/a |
+| Donor wall | opt-in, first name + initial | optional list + leaderboard | no |
+| Suggested amounts | yes (links with amount) | 4, with notes | no |
+| Recurring | via processor | M/Q/Y | monthly asks (coached) |
+| P2P / teams | no | yes | no |
+| Matching | no | no | no |
+| Embeds | n/a (native page) | button, form, thermometer | no |
+| Multilingual | every site language | ES/FR forms | no |
+| Custom domain | yes | no | no |
+| AI | story and thank-you draft | no | "wealth prediction" |
+| Own website | is the site | plugin/embed/hosted page | none |
+
+### Takeaways for the MVP
+1. **Match:** per-amount notes on suggested amounts, offline gifts in the thermometer (shipped; make it the headline) and the optional leaderboard are Zeffy's table stakes. P2P and team pages are the biggest visible gap, out of phase A scope.
+2. **Linking out:** strength: no fees, no PCI, custom domain, any language, AI story, all things Zeffy lacks. Weakness: the progress bar is only as fresh as the last publish after staff record gifts, and the donor leaves the domain at the moment of giving; Zeffy's embedded form keeps them on-site. An embedded Zeffy form is a candidate for a later phase.
+3. **Attribution:** Zeffy attributes by form, not by URL parameter (no documented prefill). The org must create one Zeffy form per campaign and store that form URL (with the locale segment matching the page language). The `?campaign=` and `&amount=` parameters the page appends are there for processors and analytics that read them; reconciliation comes from Zeffy's CSV export or read-only API, which the gifts CSV import takes.

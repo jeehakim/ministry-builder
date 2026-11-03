@@ -2,11 +2,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type {
   AiAddSectionRequest,
   AiAddSectionResponse,
+  AiCampaignStoryRequest,
+  AiCampaignStoryResponse,
   AiDraftRequest,
   AiDraftResponse,
   AiEditRequest,
   AiEditResponse,
   AiRewriteRequest,
+  AiThankYouRequest,
   AiThemeRequest,
   AiThemeResponse,
   AiTranslateResponse,
@@ -56,7 +59,12 @@ export interface AiContextValue {
   /** Scoped edit (Ask AI). The result is a change set for the user to review; nothing is applied here. */
   runEdit(request: AiEditRequest): Promise<AiEditResponse | null>;
   runAddSection(request: AiAddSectionRequest): Promise<AiAddSectionResponse | null>;
+  runCampaignStory(campaignId: string, request: AiCampaignStoryRequest): Promise<AiCampaignStoryResponse | null>;
+  runThankYou(campaignId: string, request: AiThankYouRequest): Promise<string | null>;
 }
+
+export const CAMPAIGN_STORY_BUSY_KEY = "campaign-story";
+export const THANK_YOU_BUSY_KEY = "thank-you";
 
 const noop = async () => {};
 const unavailable = async () => null;
@@ -76,6 +84,8 @@ const INERT: AiContextValue = {
   runTranslate: unavailable,
   runEdit: unavailable,
   runAddSection: unavailable,
+  runCampaignStory: unavailable,
+  runThankYou: unavailable,
 };
 
 const AiContext = createContext<AiContextValue>(INERT);
@@ -175,6 +185,11 @@ export function AiProvider({ orgId = null, readOnly = false, children }: { orgId
       runTranslate: (language) => run(TRANSLATE_BUSY_KEY, (client) => client.translate(siteId, language)),
       runEdit: (request) => run(EDIT_BUSY_KEY, (client) => client.edit(siteId, request)),
       runAddSection: (request) => run(EDIT_BUSY_KEY, (client) => client.addSection(siteId, request)),
+      runCampaignStory: (campaignId, request) => run(CAMPAIGN_STORY_BUSY_KEY, (client) => client.campaignStory(siteId, campaignId, request)),
+      runThankYou: async (campaignId, request) => {
+        const result = await run(THANK_YOU_BUSY_KEY, (client) => client.thankYou(siteId, campaignId, request));
+        return result ? result.message : null;
+      },
     };
   }, [ai, readOnly, usage, busy, refreshUsage, run, siteId]);
 

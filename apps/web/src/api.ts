@@ -2,12 +2,19 @@ import {
   AiAddSectionResponse,
   AcceptInvitationResponse,
   AiAltTextResponse,
+  AiCampaignStoryResponse,
   AiDraftResponse,
   AiEditResponse,
   AiRewriteResponse,
   AiThemeResponse,
+  AiThankYouResponse,
   AiTranslateResponse,
   AiUsageResponse,
+  CampaignListResponse,
+  CampaignResponse,
+  GiftImportResponse,
+  GiftListResponse,
+  GiftResponse,
   CreateInvitationResponse,
   EventsResponse,
   IntegrationsResponse,
@@ -18,8 +25,14 @@ import {
   OrgsResponse,
   SiteDocument,
   type AiAddSectionRequest,
+  type AiCampaignStoryRequest,
   type AiDraftRequest,
   type AiEditRequest,
+  type AiThankYouRequest,
+  type CampaignInput,
+  type CampaignTotals,
+  type CampaignWithTotals,
+  type GiftInput,
   type AiRewriteRequest,
   type AiThemeRequest,
   type AiTranslateRequest,
@@ -44,6 +57,8 @@ export interface SiteSummary {
   updatedAt: string;
   /** Live URL on Ministry Sites, or null when the site is not published. */
   publishedUrl: string | null;
+  /** When the site was last published, or null. */
+  publishedAt: string | null;
 }
 
 export interface SiteInfo {
@@ -125,8 +140,18 @@ export interface DomainList {
   enabled: boolean;
 }
 
+/** A campaign as the organization-wide list reports it, with the slug of the site it belongs to. */
+export type OrgCampaign = CampaignWithTotals & { siteSlug: string };
+
+export interface OrgCampaignList {
+  campaigns: OrgCampaign[];
+  sites: { id: string; slug: string; published: boolean }[];
+}
+
 export class ApiError extends Error {
   readonly status: number;
+  /** Present on a 400 from the gifts import: the per-row errors the server found. */
+  importResult?: GiftImportResponse;
   constructor(status: number, message: string) {
     super(message);
     this.name = "ApiError";
@@ -192,6 +217,19 @@ export interface ApiClient {
   aiTranslate(siteId: string, language: string): Promise<AiTranslateResponse>;
   aiEdit(siteId: string, body: AiEditRequest): Promise<AiEditResponse>;
   aiAddSection(siteId: string, body: AiAddSectionRequest): Promise<AiAddSectionResponse>;
+  aiCampaignStory(siteId: string, campaignId: string, body: AiCampaignStoryRequest): Promise<AiCampaignStoryResponse>;
+  aiThankYou(siteId: string, campaignId: string, body: AiThankYouRequest): Promise<AiThankYouResponse>;
+  listOrgCampaigns(orgId: string): Promise<OrgCampaignList>;
+  listCampaigns(siteId: string): Promise<CampaignWithTotals[]>;
+  getCampaign(siteId: string, campaignId: string): Promise<CampaignWithTotals>;
+  createCampaign(siteId: string, body: CampaignInput): Promise<CampaignWithTotals>;
+  updateCampaign(siteId: string, campaignId: string, body: CampaignInput): Promise<CampaignWithTotals>;
+  deleteCampaign(siteId: string, campaignId: string): Promise<void>;
+  listGifts(siteId: string, campaignId: string): Promise<GiftListResponse>;
+  addGift(siteId: string, campaignId: string, body: GiftInput): Promise<GiftResponse>;
+  deleteGift(siteId: string, campaignId: string, giftId: string): Promise<CampaignTotals>;
+  /** Resolves with the import result; a 400 with row errors is returned, not thrown. */
+  importGifts(siteId: string, campaignId: string, csv: string): Promise<GiftImportResponse>;
   listOrgs(): Promise<OrgSummary[]>;
   orgMembers(orgId: string): Promise<MembersResponse>;
   updateMember(orgId: string, userId: string, role: OrgRole): Promise<OrgMember>;
@@ -208,7 +246,12 @@ export interface ApiClient {
 
 type ErrorFactory = (status: number, message: string, body: unknown) => ApiError;
 
-const plainError: ErrorFactory = (status, message) => new ApiError(status, message);
+const plainError: ErrorFactory = (status, message, body) => {
+  const error = new ApiError(status, message);
+  const parsed = status === 400 ? GiftImportResponse.safeParse(body) : null;
+  if (parsed?.success) error.importResult = parsed.data;
+  return error;
+};
 
 const aiError: ErrorFactory = (status, message, body) => {
   const fields = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
@@ -266,6 +309,7 @@ function isPublishResult(v: unknown): v is PublishResult {
 
 function errorMessage(status: number, body: unknown): string {
   if (body && typeof body === "object" && "error" in body && typeof body.error === "string") return body.error;
+  if (body && typeof body === "object" && "errors" in body && Array.isArray(body.errors) && body.errors.length) return "Some rows could not be imported.";
   if (status === 401) return "Your session has expired. Please sign in again.";
   return `Request failed (${status}).`;
 }
@@ -343,13 +387,15 @@ export function createApiClient(getToken: GetToken, baseUrl: string = API_URL): 
     return parsed.data;
   }
 
+  const campaignPath = (siteId: string, campaignId: string) => `${sitePath(siteId)}/campaigns/${encodeURIComponent(campaignId)}`;
+
   return {
     async listSites(orgId) {
       const query = orgId ? `?orgId=${encodeURIComponent(orgId)}` : "";
       const data = await request<{
-        sites: (Omit<SiteSummary, "publishedUrl" | "orgId" | "role"> & { orgId?: string | null; role?: unknown; publishedUrl?: string | null })[];
+        sites: (Omit<SiteSummary, "publishedUrl" | "publishedAt" | "orgId" | "role"> & { orgId?: string | null; role?: unknown; publishedUrl?: string | null; publishedAt?: string | null })[];
       }>(`/sites${query}`, json("GET"), JSON_TIMEOUT_MS);
-      return data.sites.map((s) => ({ ...s, orgId: s.orgId ?? null, role: roleOrOwner(s.role), publishedUrl: s.publishedUrl ?? null }));
+      return data.sites.map((s) => ({ ...s, orgId: s.orgId ?? null, role: roleOrOwner(s.role), publishedUrl: s.publishedUrl ?? null, publishedAt: s.publishedAt ?? null }));
     },
     async createSite(input) {
       const data = await request<{ site: RawSiteInfo; document: unknown }>("/sites", json("POST", input), JSON_TIMEOUT_MS);
@@ -448,6 +494,49 @@ export function createApiClient(getToken: GetToken, baseUrl: string = API_URL): 
     },
     aiAddSection(siteId, body) {
       return aiRequest(`${sitePath(siteId)}/ai/add-section`, AiAddSectionResponse, json("POST", body), AI_TIMEOUT_MS);
+    },
+    aiCampaignStory(siteId, campaignId, body) {
+      return aiRequest(`${campaignPath(siteId, campaignId)}/ai/story`, AiCampaignStoryResponse, json("POST", body), AI_TIMEOUT_MS);
+    },
+    aiThankYou(siteId, campaignId, body) {
+      return aiRequest(`${campaignPath(siteId, campaignId)}/ai/thank-you`, AiThankYouResponse, json("POST", body), AI_TIMEOUT_MS);
+    },
+    listOrgCampaigns(orgId) {
+      return request<OrgCampaignList>(`/orgs/${encodeURIComponent(orgId)}/campaigns`, json("GET"), JSON_TIMEOUT_MS);
+    },
+    async listCampaigns(siteId) {
+      return (await validated(`${sitePath(siteId)}/campaigns`, CampaignListResponse, json("GET"))).campaigns;
+    },
+    async getCampaign(siteId, campaignId) {
+      return (await validated(campaignPath(siteId, campaignId), CampaignResponse, json("GET"))).campaign;
+    },
+    async createCampaign(siteId, body) {
+      return (await validated(`${sitePath(siteId)}/campaigns`, CampaignResponse, json("POST", body))).campaign;
+    },
+    async updateCampaign(siteId, campaignId, body) {
+      return (await validated(campaignPath(siteId, campaignId), CampaignResponse, json("PUT", body))).campaign;
+    },
+    async deleteCampaign(siteId, campaignId) {
+      await request<unknown>(campaignPath(siteId, campaignId), json("DELETE"), JSON_TIMEOUT_MS);
+    },
+    listGifts(siteId, campaignId) {
+      return validated(`${campaignPath(siteId, campaignId)}/gifts?limit=2000`, GiftListResponse, json("GET"));
+    },
+    addGift(siteId, campaignId, body) {
+      return validated(`${campaignPath(siteId, campaignId)}/gifts`, GiftResponse, json("POST", body));
+    },
+    async deleteGift(siteId, campaignId, giftId) {
+      const data = await request<{ totals: CampaignTotals }>(`${campaignPath(siteId, campaignId)}/gifts/${encodeURIComponent(giftId)}`, json("DELETE"), JSON_TIMEOUT_MS);
+      return data.totals;
+    },
+    async importGifts(siteId, campaignId, csv) {
+      try {
+        return await validated(`${campaignPath(siteId, campaignId)}/gifts/import`, GiftImportResponse, json("POST", { csv }));
+      } catch (err) {
+        // Row errors come back as a 400 whose body is the same envelope; surface them instead of a bare message.
+        if (err instanceof ApiError && err.status === 400 && err.importResult) return err.importResult;
+        throw err;
+      }
     },
     async listOrgs() {
       return (await validated("/orgs", OrgsResponse, json("GET"))).orgs;

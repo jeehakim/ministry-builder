@@ -1,6 +1,6 @@
 import { languageName, type SectionType } from "@ministry/schema";
 import { modelContent } from "./edit";
-import type { AddSectionInput, DraftInput, EditInput, RewriteInput, TemplateChoice, ThemeInput } from "./provider";
+import type { AddSectionInput, CampaignStoryInput, DraftInput, EditInput, RewriteInput, TemplateChoice, ThankYouInput, ThemeInput } from "./provider";
 import type { TranslatableText } from "./translatable";
 
 /**
@@ -283,5 +283,46 @@ export function addSectionUserText(input: AddSectionInput): string {
     const json = JSON.stringify(modelContent({ kind: "section", section: input.afterSection })).replace(/</g, "\\u003c");
     parts.push(`The new section will follow this one:\n<after>\n${json}\n</after>`);
   }
+  return parts.join("\n\n");
+}
+
+export function campaignStorySystemPrompt(input: CampaignStoryInput): string {
+  return `You write fundraising campaign pages for churches, ministries and non-profits.
+
+Output rules:
+- Reply with a single JSON object and nothing else: { "title": string, "summary": string, "story": string }.
+- "title": under 8 words, concrete, no exclamation marks.
+- "summary": one sentence (under 160 characters) that says what the money does, for a card on the organization's website.
+- "story": 3 to 5 short paragraphs of plain text separated by blank lines (no markdown, no headings, no bullet points): the need, what the gift makes possible, who it helps, and a direct, warm ask. Under 1800 characters.
+- ${languageRule(input.language)}
+
+${FACT_RULES}
+- Mention the goal or deadline only if they are given below. Never invent amounts, dates, names, statistics or links.`;
+}
+
+export function campaignStoryUserText(input: CampaignStoryInput): string {
+  const parts = [`Organization name: ${input.orgName}`];
+  if (input.goalText) parts.push(`Goal: ${input.goalText}`);
+  if (input.deadline) parts.push(`Deadline: ${input.deadline}`);
+  parts.push(fence("notes", input.brief));
+  return parts.join("\n\n");
+}
+
+export function thankYouSystemPrompt(input: ThankYouInput): string {
+  return `You write the thank-you note a non-profit emails to someone who just gave to a campaign.
+
+Output rules:
+- Reply with a single JSON object and nothing else: { "message": string }.
+- "message": plain text, 2 or 3 short paragraphs separated by blank lines, under 900 characters. Start with "Dear {{name}}," exactly like that: the placeholder {{name}} is replaced with the donor's name when the email is sent. End with a sign-off from the organization by name, no personal names.
+- Say what the gift makes possible, in the campaign's own words. Warm and specific; no exclamation overload, no tax or receipt language, no amounts.
+- ${languageRule(input.language)}
+
+${FACT_RULES}`;
+}
+
+export function thankYouUserText(input: ThankYouInput): string {
+  const parts = [`Organization name: ${input.orgName}`, `Campaign title: ${input.campaignTitle.replace(/[\n]/g, " ")}`];
+  if (input.story.trim()) parts.push(fence("notes", input.story));
+  if (input.notes?.trim()) parts.push(fence("style_notes", input.notes));
   return parts.join("\n\n");
 }
