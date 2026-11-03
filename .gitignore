@@ -7,3 +7,7 @@ dist/
 !.env.example
 *.log
 .DS_Store
+
+# Business plan and market research stay local: not for the public repository.
+docs/COMPETITORS.md
+docs/PROPOSAL.md

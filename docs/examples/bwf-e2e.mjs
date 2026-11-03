@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const API = process.env.API_URL ?? "https://api.build.shofar.io";
+const API = process.env.API_URL ?? "https://api.build.shofar.ai";
 const TOKEN = readFileSync(process.env.STAFF_TOKEN_FILE ?? join(here, "staff-token.txt"), "utf8").trim();
 const OWNER_EMAIL = process.env.OWNER_EMAIL ?? "";
 const PICK = process.env.PICK; // index of the variation to use; when unset, the script stops after saving previews

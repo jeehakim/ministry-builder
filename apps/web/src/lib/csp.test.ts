@@ -35,9 +35,9 @@ test("scripts and framing are locked down", () => {
 });
 
 test("the app can reach the API and Clerk", () => {
-  assert.ok(CSP_DIRECTIVES["connect-src"]?.includes("https://api.build.shofar.io"));
-  assert.ok(CSP_DIRECTIVES["connect-src"]?.includes("https://clerk.build.shofar.io"));
-  assert.ok(CSP_DIRECTIVES["script-src"]?.includes("https://clerk.build.shofar.io"));
+  assert.ok(CSP_DIRECTIVES["connect-src"]?.includes("https://api.build.shofar.ai"));
+  assert.ok(CSP_DIRECTIVES["connect-src"]?.includes("https://clerk.shofar.ai"));
+  assert.ok(CSP_DIRECTIVES["script-src"]?.includes("https://clerk.shofar.ai"));
 });
 
 test("_headers sets the baseline security headers on every path", () => {

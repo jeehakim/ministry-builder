@@ -101,7 +101,7 @@ Everything runs on Cloudflare's free plan.
 1. `wrangler d1 create ministry-sites` and paste the id into `apps/api/wrangler.jsonc`; create the buckets with `wrangler r2 bucket create ministry-images` and `wrangler r2 bucket create ministry-published`.
 2. Apply migrations: `wrangler d1 migrations apply ministry-sites --remote` inside `apps/api`.
 3. Secrets on the API Worker with `wrangler secret put`: `CLERK_SECRET_KEY`, and optionally `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `STAFF_API_TOKEN`, `CLOUDFLARE_API_TOKEN` (custom domains).
-4. Set your hostnames in both `wrangler.jsonc` files (`routes` with `custom_domain: true`), `ALLOWED_ORIGIN`, `PUBLIC_SITES_HOST`, and build the web app with `VITE_CLERK_PUBLISHABLE_KEY` and `VITE_API_URL` in `apps/web/.env.production`.
+4. Set your hostnames in both `wrangler.jsonc` files (`routes` with `custom_domain: true`), `ALLOWED_ORIGIN`, `PUBLIC_SITES_HOST` and `PUBLIC_API_HOST`, the API and Clerk hosts in `apps/web/src/lib/csp.ts` (then regenerate the policy line in `apps/web/public/_headers`), and build the web app with `VITE_CLERK_PUBLISHABLE_KEY` and `VITE_API_URL` in `apps/web/.env.production`.
 5. `pnpm --filter @ministry/api deploy` and `pnpm --filter @ministry/web deploy`.
 
 [apps/api/README.md](apps/api/README.md) covers every variable and secret, email providers, and the one-time Cloudflare for SaaS setup for custom domains.
@@ -138,7 +138,7 @@ pnpm typecheck && pnpm test && pnpm build
 - More templates and section types; ZIP export of every language
 - Enrichment sources for the copilot (non-profit registries, licensed stock photos)
 
-Plan and market research: [docs/PROPOSAL.md](docs/PROPOSAL.md), [docs/COMPETITORS.md](docs/COMPETITORS.md).
+Product design: [docs/PLATFORM-DESIGN.md](docs/PLATFORM-DESIGN.md). The business plan and market research are not part of the repository.
 
 ## Contributing
 

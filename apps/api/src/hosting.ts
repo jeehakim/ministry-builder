@@ -25,7 +25,6 @@ import { SLUG_PATTERN } from "./routes/sites";
 import { hostedContentSecurityPolicy, withHostedHeaders } from "./security";
 import type { AppEnv } from "./types";
 
-const WEB_APP_URL = "https://build.shofar.io";
 const IMAGE_FILE_PATTERN = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 
 function redirect(status: 301 | 302, location: string): Response {
@@ -254,7 +253,8 @@ async function routeHostedRequest(c: Context<AppEnv>, url: URL, sitesHost: strin
   let base: string; // URL prefix of the site root, without a trailing slash
   let rest: string; // path below the site root, always starting with "/"
   if (hostname === sitesHost) {
-    if (url.pathname === "/") return redirect(302, WEB_APP_URL);
+    // The sites host has no page of its own: send visitors to the builder (ALLOWED_ORIGIN is its origin).
+    if (url.pathname === "/") return redirect(302, c.env.ALLOWED_ORIGIN);
     const match = /^\/([^/]+)(\/.*)?$/.exec(url.pathname);
     if (!match) return notFoundPage();
     slug = match[1] ?? "";

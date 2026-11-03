@@ -118,7 +118,7 @@ describe("hosting handler", () => {
 
     const root = await hosted(`https://${HOST}/`, { redirect: "manual" });
     expect(root.status).toBe(302);
-    expect(root.headers.get("location")).toBe("https://build.shofar.io");
+    expect(root.headers.get("location")).toBe("https://build.shofar.ai");
 
     const sub = await hosted(`https://${site.slug}.${HOST}/`);
     expect(sub.status).toBe(200);
@@ -151,7 +151,7 @@ describe("hosting handler", () => {
   });
 
   it("leaves the API host alone", async () => {
-    const res = await hosted("https://api.build.shofar.io/health");
+    const res = await hosted("https://api.build.shofar.ai/health");
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true });
   });

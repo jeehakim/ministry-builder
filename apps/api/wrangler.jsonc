@@ -9,16 +9,19 @@
   "workers_dev": false,
   "preview_urls": false,
 
-  // Production hostname on the shofar.io zone (DNS and TLS managed by Cloudflare).
-  // sites.shofar.io serves published sites straight from the PUBLISHED bucket (see src/hosting.ts).
+  // Production hostnames (DNS and TLS managed by Cloudflare; `wrangler deploy` attaches them).
+  // api.build.shofar.ai is the API, on the shofar.ai zone next to the web app and the other shofar.ai apps.
+  // sites.shofar.io stays on the shofar.io zone and serves published sites straight from the PUBLISHED
+  // bucket (see src/hosting.ts); customer domains CNAME to it, so it does not move with the builder.
   "routes": [
-    { "pattern": "api.build.shofar.io", "custom_domain": true },
+    { "pattern": "api.build.shofar.ai", "custom_domain": true },
     { "pattern": "sites.shofar.io", "custom_domain": true }
   ],
 
   "vars": {
-    // Origin of the web app allowed by CORS. Override per environment.
-    "ALLOWED_ORIGIN": "https://build.shofar.io",
+    // Origin of the web app: allowed by CORS, accepted as the Clerk token's authorized party, and the
+    // base of every link back to the app (sites-host root redirect, invitation emails). Override per environment.
+    "ALLOWED_ORIGIN": "https://build.shofar.ai",
     // Chat model used by the AI copilot on OpenAI. Overridable per environment.
     "OPENAI_MODEL": "gpt-5-mini",
     // Claude model used by the AI copilot on Anthropic (AI_PROVIDER=anthropic or only ANTHROPIC_API_KEY set).
@@ -43,7 +46,7 @@
     // Hostname that serves published sites (path form: sites.shofar.io/<slug>/).
     "PUBLIC_SITES_HOST": "sites.shofar.io",
     // This API's own hostname; the hosting handler never treats it as a customer domain.
-    "PUBLIC_API_HOST": "api.build.shofar.io",
+    "PUBLIC_API_HOST": "api.build.shofar.ai",
     // Customers CNAME their domain here (any proxied hostname on the shofar.io zone, see README).
     "CUSTOM_HOSTNAME_CNAME_TARGET": "sites.shofar.io",
     // Zone id of shofar.io (dashboard: zone Overview > API). With CLOUDFLARE_API_TOKEN (a secret)

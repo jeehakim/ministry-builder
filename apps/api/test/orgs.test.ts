@@ -70,7 +70,7 @@ describe("invitation helpers", () => {
   it("masks addresses and builds links on the web origin", () => {
     expect(maskEmail("jane.doe@example.org")).toBe("j***@example.org");
     expect(maskEmail("nope")).toBe("***");
-    expect(invitationLink({ ALLOWED_ORIGIN: "https://build.shofar.io/" }, "abc")).toBe("https://build.shofar.io/invite/abc");
+    expect(invitationLink({ ALLOWED_ORIGIN: "https://build.shofar.ai/" }, "abc")).toBe("https://build.shofar.ai/invite/abc");
   });
 });
 

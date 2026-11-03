@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolveDeployment } from "./deployment.ts";
 
-const API = "https://api.build.shofar.io";
+const API = "https://api.build.shofar.ai";
 
 test("a production build with a Clerk key and API URL uses Clerk", () => {
   assert.deepEqual(resolveDeployment({ prod: true, clerkKey: "pk_live_x", apiUrl: API }), { kind: "clerk" });

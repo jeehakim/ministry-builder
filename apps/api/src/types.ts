@@ -15,7 +15,9 @@ export type Bindings = {
   IMAGES: R2Bucket;
   /** Rendered sites served by the hosting handler. Never mixed with IMAGES. */
   PUBLISHED: R2Bucket;
+  /** Origin of the web app, e.g. "https://build.shofar.ai" (var): CORS, Clerk authorized party, links back to the app. */
   ALLOWED_ORIGIN: string;
+  /** Secret. Secret key of the shofar.ai Clerk application (shared with the other shofar.ai apps). */
   CLERK_SECRET_KEY: string;
   /** Chat model for the AI copilot when OpenAI is the provider (var). */
   OPENAI_MODEL: string;
@@ -31,7 +33,7 @@ export type Bindings = {
   AI_GLOBAL_DAILY_LIMIT?: string;
   /** Hostname that serves published sites, e.g. "sites.shofar.io" (var). */
   PUBLIC_SITES_HOST: string;
-  /** Hostname of this API, e.g. "api.build.shofar.io" (var). Requests for it skip the custom-domain lookup. */
+  /** Hostname of this API, e.g. "api.build.shofar.ai" (var). Requests for it skip the custom-domain lookup. */
   PUBLIC_API_HOST?: string;
   /** Proxied hostname on the shofar.io zone that customers CNAME their domain to (var). */
   CUSTOM_HOSTNAME_CNAME_TARGET?: string;

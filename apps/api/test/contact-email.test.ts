@@ -7,7 +7,7 @@ import { contactEmailVerifications } from "../src/db/schema";
 import realApp from "../src/index";
 import { call, jsonInit, makeSite } from "./helpers";
 
-const API = "https://api.build.shofar.io";
+const API = "https://api.build.shofar.ai";
 const resend = { ...env, EMAIL_PROVIDER: "resend", RESEND_API_KEY: "re_test_key", EMAIL_FROM: "Ministry Sites <forms@shofar.io>" };
 const db = () => drizzle(env.DB);
 
