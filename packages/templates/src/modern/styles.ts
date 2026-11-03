@@ -1,6 +1,7 @@
 import type { Theme } from "@ministry/schema";
 import { themeVars } from "../util";
 import { CONTACT_FORM_CSS } from "../ContactForm";
+import { CAMPAIGN_CSS } from "../campaign";
 
 export function modernCss(theme: Theme): string {
   return `${themeVars(theme)}
@@ -92,5 +93,8 @@ section[id]{scroll-margin-top:96px}
 .lang-switch a{padding:4px 8px;border-radius:999px;text-decoration:none;color:inherit;opacity:.7}
 .lang-switch a[aria-current]{background:color-mix(in oklch, var(--primary) 12%, transparent);opacity:1;font-weight:600}
 
-${CONTACT_FORM_CSS}`;
+${CONTACT_FORM_CSS}
+${CAMPAIGN_CSS}.give .wrap.has-campaigns .give-card{max-width:none}
+.give .campaigns{margin-top:28px}
+`;
 }

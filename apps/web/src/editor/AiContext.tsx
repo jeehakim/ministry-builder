@@ -1,8 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
+  AiCampaignStoryRequest,
+  AiCampaignStoryResponse,
   AiDraftRequest,
   AiDraftResponse,
   AiRewriteRequest,
+  AiThankYouRequest,
   AiThemeRequest,
   AiThemeResponse,
   AiTranslateResponse,
@@ -25,6 +28,7 @@ export type UsageState =
 
 export const LOCAL_AI_REASON = "AI needs an account. Local mode keeps your site in this browser only, so it is off here.";
 export const NO_KEY_REASON = "No AI key configured on the server";
+export const VIEW_ONLY_REASON = "AI is off because you can only view this site.";
 
 export const DRAFT_BUSY_KEY = "draft";
 export const THEME_BUSY_KEY = "theme";
@@ -47,7 +51,12 @@ export interface AiContextValue {
   runAltText(key: string, imageSrc: string): Promise<string | null>;
   runTheme(request: AiThemeRequest): Promise<AiThemeResponse | null>;
   runTranslate(language: string): Promise<AiTranslateResponse | null>;
+  runCampaignStory(campaignId: string, request: AiCampaignStoryRequest): Promise<AiCampaignStoryResponse | null>;
+  runThankYou(campaignId: string, request: AiThankYouRequest): Promise<string | null>;
 }
+
+export const CAMPAIGN_STORY_BUSY_KEY = "campaign-story";
+export const THANK_YOU_BUSY_KEY = "thank-you";
 
 const noop = async () => {};
 const unavailable = async () => null;
@@ -65,6 +74,8 @@ const INERT: AiContextValue = {
   runAltText: unavailable,
   runTheme: unavailable,
   runTranslate: unavailable,
+  runCampaignStory: unavailable,
+  runThankYou: unavailable,
 };
 
 const AiContext = createContext<AiContextValue>(INERT);
@@ -78,10 +89,11 @@ function failureText(err: unknown): string {
   return err instanceof Error ? err.message : "Something went wrong with the AI request.";
 }
 
-export function AiProvider({ children }: { children: ReactNode }) {
+export function AiProvider({ orgId = null, readOnly = false, children }: { orgId?: string | null; readOnly?: boolean; children: ReactNode }) {
   const backend = useBackend();
   const siteId = useSiteId();
-  const ai = backend.ai ?? null;
+  // A viewer gets no AI client at all, so every AI button hides itself and nothing is fetched or counted.
+  const ai = readOnly ? null : (backend.ai ?? null);
 
   const [usage, setUsage] = useState<UsageState>(ai ? { kind: "loading" } : { kind: "none" });
   const [busy, setBusy] = useState<Record<string, boolean>>({});
@@ -103,7 +115,7 @@ export function AiProvider({ children }: { children: ReactNode }) {
     if (!ai) return;
     const seq = ++usageSeq.current;
     try {
-      const next = await ai.usage();
+      const next = await ai.usage(orgId ?? undefined);
       if (mounted.current && seq === usageSeq.current) setUsage({ kind: "ready", usage: next });
     } catch (err) {
       if (mounted.current && seq === usageSeq.current) {
@@ -112,7 +124,7 @@ export function AiProvider({ children }: { children: ReactNode }) {
         );
       }
     }
-  }, [ai]);
+  }, [ai, orgId]);
 
   useEffect(() => {
     void refreshUsage();
@@ -142,7 +154,7 @@ export function AiProvider({ children }: { children: ReactNode }) {
       ai,
       usage,
       enabled,
-      disabledReason: enabled ? null : ai === null ? LOCAL_AI_REASON : NO_KEY_REASON,
+      disabledReason: enabled ? null : readOnly ? VIEW_ONLY_REASON : ai === null ? LOCAL_AI_REASON : NO_KEY_REASON,
       busy,
       refreshUsage,
       runDraft: (request) => run(DRAFT_BUSY_KEY, (client) => client.draft(siteId, request)),
@@ -161,8 +173,13 @@ export function AiProvider({ children }: { children: ReactNode }) {
       },
       runTheme: (request) => run(THEME_BUSY_KEY, (client) => client.theme(siteId, request)),
       runTranslate: (language) => run(TRANSLATE_BUSY_KEY, (client) => client.translate(siteId, language)),
+      runCampaignStory: (campaignId, request) => run(CAMPAIGN_STORY_BUSY_KEY, (client) => client.campaignStory(siteId, campaignId, request)),
+      runThankYou: async (campaignId, request) => {
+        const result = await run(THANK_YOU_BUSY_KEY, (client) => client.thankYou(siteId, campaignId, request));
+        return result ? result.message : null;
+      },
     };
-  }, [ai, usage, busy, refreshUsage, run, siteId]);
+  }, [ai, readOnly, usage, busy, refreshUsage, run, siteId]);
 
   return <AiContext.Provider value={value}>{children}</AiContext.Provider>;
 }

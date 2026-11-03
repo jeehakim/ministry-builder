@@ -1,6 +1,7 @@
 import type { Section, SiteDocument } from "@ministry/schema";
 import type { RenderOptions } from "../types";
 import { ContactForm } from "../ContactForm";
+import { CampaignCards } from "../campaign";
 import { paragraphs } from "../util";
 import { LanguageSwitcher } from "../LanguageSwitcher";
 
@@ -167,6 +168,7 @@ function SectionView({
             {s.links.map((l, i) => (
               <a className="cta primary" key={i} href={l.href} target="_blank" rel="noopener">{l.label}</a>
             ))}
+            <CampaignCards section={s} options={options} />
           </div>
         </section>
       );

@@ -22,11 +22,11 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { z } from "zod";
-import { isSiteAssetKey, loadAuthorizedSite } from "../access";
+import { isSiteAssetKey, loadOrgAccess, requireSiteRole } from "../access";
 import { AiProviderError, createProvider, type AiCallUsage, type AiProvider } from "../ai";
 import type { TemplateChoice } from "../ai/provider";
-import { completedUsage, dailyLimit, globalDailyLimit, releaseUsage, reserveUsage, usedToday, utcDayWindow } from "../ai/usage";
-import { aiUsage, organizations, siteVersions, sites, type Site } from "../db/schema";
+import { completedUsage, dailyLimit, globalDailyLimit, orgDailyLimit, orgUsedToday, releaseUsage, reserveUsage, usedToday, utcDayWindow } from "../ai/usage";
+import { aiUsage, siteVersions, sites, type Site } from "../db/schema";
 import { newId } from "../ids";
 import { errorFields, logError, requestIdOf, scrub } from "../log";
 import { LANGUAGE_PATH_PATTERN } from "../published";
@@ -36,7 +36,7 @@ const MAX_AI_BODY_BYTES = 32 * 1024;
 const tooLarge = bodyLimit({ maxSize: MAX_AI_BODY_BYTES, onError: (c) => c.json({ error: "Body too large" }, 413) });
 
 type Ctx = Context<AppEnv>;
-type Guard = { site: Site; provider: AiProvider; orgName: string };
+export type Guard = { site: Site; provider: AiProvider; orgName: string };
 
 function templateChoices(): TemplateChoice[] {
   return Object.values(templates).map(({ id, name, description }) => ({ id, name, description }));
@@ -55,7 +55,7 @@ function knownTemplateId(id: string): string {
   return templateChoices()[0]?.id ?? "classic";
 }
 
-async function parseBody<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.output<S> | Response> {
+export async function parseBody<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.output<S> | Response> {
   const body: unknown = await c.req.json().catch(() => undefined);
   if (body === undefined) return c.json({ error: "Body must be valid JSON" }, 400);
   const parsed = schema.safeParse(body);
@@ -68,20 +68,16 @@ async function parseBody<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.o
  * taken later, by `callProvider`, once the body has been validated, so a rejected request spends nothing.
  * Returns the loaded pieces or the Response to send.
  */
-async function guard(c: Ctx): Promise<Guard | Response> {
+export async function guard(c: Ctx): Promise<Guard | Response> {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id") ?? "");
-  if (!site) return c.json({ error: "Site not found" }, 404);
-  const [org] = await db
-    .select({ name: organizations.name })
-    .from(organizations)
-    .where(eq(organizations.id, site.orgId))
-    .limit(1);
+  const access = await requireSiteRole(c, db, c.req.param("id") ?? "", "editor");
+  if (access instanceof Response) return access;
+  const { site, org } = access;
 
   const provider = createProvider(c.env);
   if (!provider) return c.json({ error: "AI is not configured on this server" }, 503);
 
-  return { site, provider, orgName: org?.name ?? "Your organization" };
+  return { site, provider, orgName: org.name };
 }
 
 const AUDIT_MAX_CHARS = 4000;
@@ -97,7 +93,7 @@ function audit(value: unknown): string | null {
  * The statement that turns the call's reservation into its finished `ai_usage` row. Tokens were spent
  * whether or not the output turns out usable, so callers run it on every path after the provider answered.
  */
-function finishUsage(
+export function finishUsage(
   db: ReturnType<typeof drizzle>,
   usageId: string,
   usage: AiCallUsage,
@@ -113,33 +109,33 @@ function finishUsage(
  * Reserves a quota slot, runs the provider call and logs tokens and latency. Over quota answers 429;
  * a provider failure gives the slot back and answers 502. On success the caller finishes the usage row.
  */
-async function callProvider<T extends { usage: AiCallUsage }>(
+export async function callProvider<T extends { usage: AiCallUsage }>(
   c: Ctx,
-  siteId: string,
+  site: Pick<Site, "id" | "orgId">,
   action: AiAction,
   call: () => Promise<T>,
 ): Promise<{ result: T; usageId: string } | Response> {
   const db = drizzle(c.env.DB);
   const reservation = await reserveUsage(db, {
     userId: c.var.user.id,
-    siteId,
+    siteId: site.id,
+    orgId: site.orgId,
     action,
     userLimit: dailyLimit(c.env),
+    orgLimit: orgDailyLimit(c.env),
     globalLimit: globalDailyLimit(c.env),
   });
   if (!reservation.ok) {
     const resetsAt = utcDayWindow().resetsAt.toISOString();
+    const quota = { scope: reservation.reason, used: reservation.used, limit: reservation.limit, resetsAt };
     if (reservation.reason === "global") {
       logError("ai_global_limit_reached", requestIdOf(c), { used: reservation.used, limit: reservation.limit });
-      return c.json(
-        { error: "The AI assistant has reached its daily capacity for everyone. It resets at midnight UTC.", used: reservation.used, limit: reservation.limit, resetsAt },
-        429,
-      );
+      return c.json({ error: "The AI assistant has reached its daily capacity for everyone. It resets at midnight UTC.", ...quota }, 429);
     }
-    return c.json(
-      { error: "Daily AI limit reached. It resets at midnight UTC.", used: reservation.used, limit: reservation.limit, resetsAt },
-      429,
-    );
+    if (reservation.reason === "organization") {
+      return c.json({ error: `Your organization's daily AI limit (${reservation.limit}) is used up. It resets at midnight UTC.`, ...quota }, 429);
+    }
+    return c.json({ error: "Daily AI limit reached. It resets at midnight UTC.", ...quota }, 429);
   }
 
   const startedAt = Date.now();
@@ -180,14 +176,21 @@ async function checkImageKey(c: Ctx, siteId: string, key: string | undefined): P
 
 export const aiRoutes = new Hono<AppEnv>();
 
+/** Today's use by the caller, plus their organization's when `?orgId=` names one they belong to. */
 aiRoutes.get("/ai/usage", async (c) => {
-  const used = await usedToday(drizzle(c.env.DB), c.var.user.id);
+  const db = drizzle(c.env.DB);
+  const used = await usedToday(db, c.var.user.id);
   const body: AiUsageResponse = {
     used,
     limit: dailyLimit(c.env),
     resetsAt: utcDayWindow().resetsAt.toISOString(),
     available: createProvider(c.env) !== null,
   };
+  const orgId = c.req.query("orgId");
+  if (orgId) {
+    const access = await loadOrgAccess(db, c.var.user, orgId);
+    if (access) body.organization = { used: await orgUsedToday(db, access.org.id), limit: orgDailyLimit(c.env) };
+  }
   return c.json(body);
 });
 
@@ -199,7 +202,7 @@ aiRoutes.post("/sites/:id/ai/draft", tooLarge, async (c) => {
   const referenceAssetKey = await checkImageKey(c, g.site.id, body.referenceAssetKey);
   if (referenceAssetKey instanceof Response) return referenceAssetKey;
 
-  const called = await callProvider(c, g.site.id, "draft", () =>
+  const called = await callProvider(c, g.site, "draft", () =>
     g.provider.draft({
       notes: body.notes,
       language: body.language,
@@ -260,7 +263,7 @@ aiRoutes.post("/sites/:id/ai/rewrite", tooLarge, async (c) => {
   const body = await parseBody(c, AiRewriteRequest);
   if (body instanceof Response) return body;
 
-  const called = await callProvider(c, g.site.id, "rewrite", () => g.provider.rewrite(body));
+  const called = await callProvider(c, g.site, "rewrite", () => g.provider.rewrite(body));
   if (called instanceof Response) return called;
   const { result, usageId } = called;
 
@@ -277,7 +280,7 @@ aiRoutes.post("/sites/:id/ai/theme", tooLarge, async (c) => {
   const referenceAssetKey = await checkImageKey(c, g.site.id, body.referenceAssetKey);
   if (referenceAssetKey instanceof Response) return referenceAssetKey;
 
-  const called = await callProvider(c, g.site.id, "theme", () =>
+  const called = await callProvider(c, g.site, "theme", () =>
     g.provider.theme({ templates: templateChoices(), description: body.description, referenceAssetKey }),
   );
   if (called instanceof Response) return called;
@@ -305,7 +308,7 @@ aiRoutes.post("/sites/:id/ai/alt-text", tooLarge, async (c) => {
   if (assetKey instanceof Response) return assetKey;
   if (assetKey === undefined) return c.json({ error: "assetKey is required" }, 400);
 
-  const called = await callProvider(c, g.site.id, "alt_text", () => g.provider.altText({ assetKey, orgName: g.orgName }));
+  const called = await callProvider(c, g.site, "alt_text", () => g.provider.altText({ assetKey, orgName: g.orgName }));
   if (called instanceof Response) return called;
   const { result, usageId } = called;
 
@@ -314,7 +317,7 @@ aiRoutes.post("/sites/:id/ai/alt-text", tooLarge, async (c) => {
   return c.json(response);
 });
 
-async function currentDocument(db: ReturnType<typeof drizzle>, site: Site): Promise<SiteDocument | null> {
+export async function currentDocument(db: ReturnType<typeof drizzle>, site: Site): Promise<SiteDocument | null> {
   if (!site.currentVersionId) return null;
   const [version] = await db
     .select({ document: siteVersions.document })
@@ -341,7 +344,7 @@ aiRoutes.post("/sites/:id/ai/translate", tooLarge, async (c) => {
     return c.json({ error: "That is already the site's main language" }, 400);
   }
 
-  const called = await callProvider(c, g.site.id, "translate", () =>
+  const called = await callProvider(c, g.site, "translate", () =>
     g.provider.translate({ document, targetLanguage: language, sourceLanguage: document.meta.language }),
   );
   if (called instanceof Response) return called;

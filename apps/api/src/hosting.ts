@@ -2,10 +2,13 @@ import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
+import { CAMPAIGN_SLUG_PATTERN } from "@ministry/schema";
 import {
   LANGUAGE_PATH_PATTERN,
   LANGUAGE_TAG_PATTERN,
+  publishedCampaignKey,
   publishedImagePrefix,
+  publishedLanguageCampaignKey,
   publishedIndexKey,
   publishedLanguageIndexKey,
   parseFormOrigins,
@@ -69,7 +72,8 @@ function methodNotAllowed(): Response {
 
 /**
  * Streams one object of a published site: its index at "/", a language page at "/<lang>/", a thank-you
- * page at "/thanks/" or "/<lang>/thanks/", "/robots.txt", "/sitemap.xml", or an image under "/images/". `base` is the URL prefix of the
+ * page at "/thanks/" or "/<lang>/thanks/", a campaign page at "/give/<campaign>/" or "/<lang>/give/<campaign>/",
+ * "/robots.txt", "/sitemap.xml", or an image under "/images/". `base` is the URL prefix of the
  * site root ("" or "/<slug>"), used for the redirects that add a trailing slash.
  */
 async function serveSiteFile(c: Context<AppEnv>, siteId: string, base: string, rest: string, search: string): Promise<Response> {
@@ -82,7 +86,19 @@ async function serveSiteFile(c: Context<AppEnv>, siteId: string, base: string, r
   const lang = languageMatch?.[1];
   const thanksMatch = /^(?:\/([^/]+))?\/thanks(\/)?$/.exec(rest);
   const thanksLang = thanksMatch?.[1];
-  if (thanksMatch && (thanksLang === undefined || LANGUAGE_PATH_PATTERN.test(thanksLang))) {
+  const campaignMatch = /^(?:\/([^/]+))?\/give\/([^/]+)(\/)?$/.exec(rest);
+  const campaignLang = campaignMatch?.[1];
+  const campaignSlug = campaignMatch?.[2] ?? "";
+  if (campaignMatch && (campaignLang === undefined || LANGUAGE_PATH_PATTERN.test(campaignLang)) && CAMPAIGN_SLUG_PATTERN.test(campaignSlug)) {
+    key = campaignLang === undefined ? publishedCampaignKey(siteId, campaignSlug) : publishedLanguageCampaignKey(siteId, campaignLang, campaignSlug);
+    cacheControl = "public, max-age=60";
+    isPage = true;
+    pageLanguage = campaignLang;
+    if (campaignMatch[3] === undefined) {
+      if (!(await c.env.PUBLISHED.head(key))) return notFoundPage();
+      return redirect(301, `${base}${campaignLang === undefined ? "" : `/${campaignLang}`}/give/${campaignSlug}/${search}`);
+    }
+  } else if (thanksMatch && (thanksLang === undefined || LANGUAGE_PATH_PATTERN.test(thanksLang))) {
     key = thanksLang === undefined ? publishedThanksKey(siteId) : publishedLanguageThanksKey(siteId, thanksLang);
     // The thank-you page is only ever reached through a form post; it must not be cached or indexed.
     cacheControl = "no-store";

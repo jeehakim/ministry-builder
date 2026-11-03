@@ -20,7 +20,7 @@ Line numbers below are those of HEAD ca60359 and no longer match the code. This 
 | 7 | MEDIUM | Fixed | `apps/web/public/_headers` (CSP checked by `csp.test.ts`), `apps/api/src/security.ts` on API and hosted responses |
 | 8 | LOW | Open | Count-then-insert, IPv6 keyed by full address, per-site cap fixed at 30 per hour (`apps/api/src/contact.ts`) |
 | 9 | LOW | Open | SHA-256 with the `FORM_SALT` var (default `ministry`), no retention period, user agent kept. Set `FORM_SALT` in production until this is reworked |
-| 10 | LOW | Partly fixed | Site deletion now clears `ai_usage` request and result text. The Clerk `user.deleted` webhook arrives with the organizations work (PR 4). No retention TTL |
+| 10 | LOW | Partly fixed | Site deletion clears `ai_usage` request and result text, and the Clerk `user.deleted` webhook (`POST /webhooks/clerk`, PR 4) removes memberships and the email. No retention TTL for versions or messages |
 | 11 | LOW | Fixed | Custom hostnames and domain rows are removed before the site rows (`apps/api/src/routes/sites.ts`) |
 | 12 | LOW | Open | Draft `language` still has no length bound (`packages/schema/src/ai.ts`); `orgName` is fenced only in the alt-text prompt. Model output is validated against the strict schema, which closes the path into finding 1 |
 | 13 | INFO | Open | One static staff token, no minimum length check, no audit trail of staff actions |

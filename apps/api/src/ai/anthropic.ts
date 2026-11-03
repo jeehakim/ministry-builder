@@ -5,16 +5,20 @@ import { AiProviderError, type AiCallUsage, type AiProvider } from "./provider";
 import {
   altSystemPrompt,
   altUserText,
+  campaignStorySystemPrompt,
+  campaignStoryUserText,
   draftSystemPrompt,
   draftUserText,
   rewriteSystemPrompt,
   rewriteUserText,
+  thankYouSystemPrompt,
+  thankYouUserText,
   themeSystemPrompt,
   themeUserText,
   translateSystemPrompt,
   translateUserText,
 } from "./prompts";
-import { AltOutput, draftOutputSchema, RewriteOutput, ThemeOutput, translationOutputSchema } from "./schemas";
+import { AltOutput, CampaignStoryOutput, draftOutputSchema, RewriteOutput, ThankYouOutput, ThemeOutput, translationOutputSchema } from "./schemas";
 import { extractTranslatable, isEmptyTranslatable } from "./translatable";
 
 type ContentPart = Anthropic.TextBlockParam | Anthropic.ImageBlockParam;
@@ -276,6 +280,28 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): AiPr
         maxTokens: SMALL_MAX_TOKENS,
       });
       return { alt: data.alt, usage };
+    },
+
+    async campaignStory(input) {
+      const { data, usage } = await run({
+        system: campaignStorySystemPrompt(input),
+        user: [{ type: "text", text: campaignStoryUserText(input) }],
+        schema: CampaignStoryOutput,
+        timeout: SMALL_TIMEOUT_MS,
+        maxTokens: SMALL_MAX_TOKENS,
+      });
+      return { title: data.title, summary: data.summary, story: data.story, usage };
+    },
+
+    async thankYou(input) {
+      const { data, usage } = await run({
+        system: thankYouSystemPrompt(input),
+        user: [{ type: "text", text: thankYouUserText(input) }],
+        schema: ThankYouOutput,
+        timeout: SMALL_TIMEOUT_MS,
+        maxTokens: SMALL_MAX_TOKENS,
+      });
+      return { message: data.message, usage };
     },
 
     async translate(input) {

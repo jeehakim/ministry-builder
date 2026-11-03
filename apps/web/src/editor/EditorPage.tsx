@@ -10,7 +10,7 @@ import {
   type AiDraftVariation,
   type Section,
 } from "@ministry/schema";
-import { AlertCircle, ArrowLeft, ExternalLink, Monitor, Smartphone } from "lucide-react";
+import { AlertCircle, ArrowLeft, Eye, ExternalLink, Monitor, Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import type { SiteInfo } from "../api";
 import { useBackend } from "../backend-context";
@@ -19,7 +19,9 @@ import { PublishModal } from "../components/PublishModal";
 import { buildExportZip, downloadBlob, exportFileName } from "../lib/exportZip";
 import { previewLanguageLinks } from "../lib/languages";
 import { platformContactEmail } from "../lib/messages";
+import { can } from "../lib/roles";
 import { useLatest } from "../lib/useLatest";
+import { useSyncOrgToPage } from "../orgs/OrgContext";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -31,6 +33,7 @@ import { MessagesDialog } from "./MessagesDialog";
 import { editSection, formatIssue, setTranslation } from "./documentOps";
 import { EditorHeader } from "./EditorHeader";
 import { SiteIdProvider } from "./EditorContext";
+import { GiveCampaignsPanel } from "./GiveCampaignsPanel";
 import { ContactEmailVerification } from "./ContactEmailVerification";
 import { FieldsForm } from "./FieldsForm";
 import { LanguageSwitcher } from "./LanguageSwitcher";
@@ -54,6 +57,8 @@ export function EditorPage() {
 
 function Editor({ siteId }: { siteId: string }) {
   const editor = useSiteDocument(siteId);
+  // Opened by a direct link: make the site's organization the current one so the header tells the truth.
+  useSyncOrgToPage(editor.load.kind === "ready" ? editor.load.site.orgId : null);
 
   useEffect(() => {
     if (editor.save.kind === "error") toast.error("Could not save", { description: editor.save.message });
@@ -64,7 +69,7 @@ function Editor({ siteId }: { siteId: string }) {
 
   return (
     <SiteIdProvider value={siteId}>
-      <AiProvider>
+      <AiProvider orgId={editor.load.site.orgId} readOnly={!can(editor.load.site.role, "ai")}>
         <EditorView key={siteId} editor={editor} doc={editor.load.doc} site={editor.load.site} />
       </AiProvider>
     </SiteIdProvider>
@@ -88,6 +93,7 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
   const [variations, setVariations] = useState<AiDraftResponse | null>(null);
   const dialogNow = useLatest(dialog);
   const siteSlug = site.slug;
+  const readOnly = !can(site.role, "edit");
   const contactEmail = useMemo(() => platformContactEmail(doc), [doc]);
 
   const { active: lang, translating, setEditingLang } = useEditingLanguage(doc);
@@ -201,6 +207,12 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
 
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(340px,400px)_1fr]">
           <aside className="flex min-h-0 flex-col border-r bg-sidebar">
+            {readOnly ? (
+              <p role="note" className="flex items-start gap-2 border-b bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                <Eye className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <span>You can look around, but this site is view only for you. Ask an admin for the editor role to make changes.</span>
+              </p>
+            ) : null}
             <LanguageSwitcher languages={languages} active={lang} onSelect={setEditingLang} />
             <Tabs value={tab} onValueChange={(v) => setTab(v === "site" ? "site" : "sections")} className="flex min-h-0 flex-1 flex-col gap-0">
               <div className="shrink-0 border-b px-3 pt-2">
@@ -221,7 +233,7 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
                 <div className="space-y-5 p-3">
                   <SectionList
                     sections={viewDoc.sections}
-                    locked={translating}
+                    locked={translating || readOnly}
                     selectedId={selected?.id ?? null}
                     onSelect={setSelectedId}
                     onMove={editor.moveSection}
@@ -244,15 +256,27 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
                           <p className="text-[11px] text-muted-foreground">{SECTION_LABELS[selected.type]} section</p>
                         </div>
                       </div>
-                      <FieldsForm
-                        key={`${selected.id}:${lang}`}
-                        value={selected}
-                        fields={SECTION_FIELDS[selected.type]}
-                        sectionType={selected.type}
-                        translating={translating}
-                        onChange={(next: Obj) => editor.update((d) => editSection(d, lang, next as Section))}
-                      />
-                      {selected.type === "contact" && backend.contactEmail && !translating ? (
+                      <fieldset disabled={readOnly} aria-label={`${sectionTitle(selected)} fields`} className="m-0 min-w-0 border-0 p-0">
+                        <FieldsForm
+                          key={`${selected.id}:${lang}`}
+                          value={selected}
+                          fields={SECTION_FIELDS[selected.type]}
+                          sectionType={selected.type}
+                          translating={translating}
+                          onChange={(next: Obj) => editor.update((d) => editSection(d, lang, next as Section))}
+                        />
+                      </fieldset>
+                      {selected.type === "give" && !translating ? (
+                        <div className="mt-4">
+                          <GiveCampaignsPanel
+                            section={selected}
+                            orgId={site.orgId}
+                            readOnly={readOnly}
+                            onChange={(campaigns) => editor.update((d) => editSection(d, doc.meta.language, { ...(d.sections.find((s) => s.id === selected.id) as Section), campaigns } as Section))}
+                          />
+                        </div>
+                      ) : null}
+                      {selected.type === "contact" && backend.contactEmail && !translating && !readOnly ? (
                         <ContactEmailVerification contactEmail={backend.contactEmail} email={selected.email} customEndpoint={Boolean(selected.formEndpoint?.trim())} />
                       ) : null}
                     </section>
@@ -262,14 +286,16 @@ function EditorView(props: { editor: EditorState; doc: SiteDocument; site: SiteI
 
               <TabsContent value="site" className="min-h-0 flex-1 overflow-y-auto">
                 <div className="p-3">
-                  <SiteForm
-                    doc={doc}
-                    update={editor.update}
-                    lang={lang}
-                    translatingTo={translatingTo}
-                    onTranslate={translateInto}
-                    onOpenLanguage={openLanguage}
-                  />
+                  <fieldset disabled={readOnly} aria-label="Site and design" className="m-0 min-w-0 border-0 p-0">
+                    <SiteForm
+                      doc={doc}
+                      update={editor.update}
+                      lang={lang}
+                      translatingTo={translatingTo}
+                      onTranslate={translateInto}
+                      onOpenLanguage={openLanguage}
+                    />
+                  </fieldset>
                 </div>
               </TabsContent>
             </Tabs>

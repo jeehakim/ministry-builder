@@ -80,10 +80,12 @@ function CopyValue({ value, label }: { value: string; label: string }) {
 function DomainRow(props: {
   domain: SiteDomain;
   busy: boolean;
+  /** Admins and owners only; everyone else sees the status and DNS record but cannot remove. */
+  canRemove: boolean;
   onRefresh: () => void;
   onRemove: () => void;
 }) {
-  const { domain, busy, onRefresh, onRemove } = props;
+  const { domain, busy, canRemove, onRefresh, onRemove } = props;
   const state = describe(domain);
   const [confirm, setConfirm] = useState(false);
   return (
@@ -134,7 +136,7 @@ function DomainRow(props: {
             Check status
           </Button>
         )}
-        {confirm ? (
+        {!canRemove ? null : confirm ? (
           <span className="flex items-center gap-1.5" role="group" aria-label={`Confirm removing ${domain.hostname}`}>
             <span className="text-xs text-muted-foreground">Remove this domain?</span>
             <Button type="button" variant="destructive" size="sm" disabled={busy} onClick={onRemove}>
@@ -157,9 +159,9 @@ function DomainRow(props: {
 
 /**
  * "Custom domain" section of the publish dialog: lists the domains attached to the site with their
- * DNS instructions and status, and lets the owner add or remove one. Needs the API backend.
+ * DNS instructions and status, and lets an admin or owner (`canManage`) add or remove one. Needs the API backend.
  */
-export function CustomDomainPanel({ domains, published }: { domains: DomainsBackend; published: boolean }) {
+export function CustomDomainPanel({ domains, published, canManage = true }: { domains: DomainsBackend; published: boolean; canManage?: boolean }) {
   const siteId = useSiteId();
   const inputId = useId();
   const [state, setState] = useState<
@@ -275,6 +277,7 @@ export function CustomDomainPanel({ domains, published }: { domains: DomainsBack
                   key={domain.id}
                   domain={domain}
                   busy={busyId === domain.id}
+                  canRemove={canManage}
                   onRefresh={() => void refresh(domain)}
                   onRemove={() => void remove(domain)}
                 />
@@ -284,6 +287,8 @@ export function CustomDomainPanel({ domains, published }: { domains: DomainsBack
 
           {!state.enabled ? (
             <p className="text-sm text-muted-foreground">Custom domains are not enabled on this server yet.</p>
+          ) : !canManage ? (
+            <p className="text-sm text-muted-foreground">Only admins and owners can add or remove domains.</p>
           ) : (
             <form
               className="flex flex-wrap items-end gap-2"
@@ -326,7 +331,7 @@ export function CustomDomainPanel({ domains, published }: { domains: DomainsBack
               </Button>
             </form>
           )}
-          {state.enabled && !published ? (
+          {state.enabled && canManage && !published ? (
             <p className="text-xs text-muted-foreground">The domain starts serving your page once the site is published.</p>
           ) : null}
         </>

@@ -1,61 +1,15 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { SiteDocument, type ImageRef } from "@ministry/schema";
-import type { RenderOptions, Template } from "./types";
+import type { RenderOptions } from "./types";
 import { uiStrings as uiStringsFor } from "./i18n";
-import { ClassicBody } from "./classic/Classic";
-import { classicCss } from "./classic/styles";
-import { ModernBody } from "./modern/Modern";
-import { modernCss } from "./modern/styles";
-import { BoldBody } from "./bold/Bold";
-import { boldCss } from "./bold/styles";
+import { campaignImages } from "./campaign";
+import { getTemplate } from "./registry";
 
-export type { LanguageLink, RenderOptions, Template } from "./types";
+export type { CampaignCard, LanguageLink, RenderOptions, Template } from "./types";
 export { uiStrings, type UiStrings } from "./i18n";
-
-export const classic: Template = {
-  id: "classic",
-  name: "Classic",
-  description: "Warm, readable, single column with a bold hero. Good for churches and community organizations.",
-  themeDefaults: {},
-  css: classicCss,
-  Body: ClassicBody,
-};
-
-export const modern: Template = {
-  id: "modern",
-  name: "Modern",
-  description: "Airy, editorial sans-serif layout with a sticky top bar and a split hero. Good for newer ministries and nonprofits.",
-  themeDefaults: {
-    heroStyle: "split",
-    radius: "large",
-    headingFont: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-  },
-  css: modernCss,
-  Body: ModernBody,
-};
-
-export const bold: Template = {
-  id: "bold",
-  name: "Bold",
-  description: "Confident, high-contrast layout with a full-bleed hero, a values grid and a closing call to action. Good for foundations and campaigns.",
-  themeDefaults: {
-    heroStyle: "image",
-    radius: "large",
-    headingFont: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-    bodyFont: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-  },
-  css: boldCss,
-  Body: BoldBody,
-};
-
-export const templates: Record<string, Template> = { classic, modern, bold };
-
-/** Registry keys in display order, for other packages (pickers, validation). */
-export const TEMPLATE_IDS: string[] = Object.keys(templates);
-
-export function getTemplate(id: string): Template {
-  return templates[id] ?? classic;
-}
+export { bold, classic, getTemplate, modern, TEMPLATE_IDS, templates } from "./registry";
+export { CAMPAIGN_CSS, campaignsFor, formatDeadline } from "./campaign";
+export { renderCampaignPage, type CampaignPageOptions, type CampaignPageInput, type RenderedCampaignPage } from "./campaignPage";
 
 export interface RenderedSite {
   /** Complete index.html with inline CSS. */
@@ -102,7 +56,7 @@ ${body}
 </body>
 </html>
 `;
-  return { html, images: collectImages(doc) };
+  return { html, images: [...collectImages(doc), ...campaignImages(options)] };
 }
 
 /** Resolves a possibly relative href against the page's canonical URL; returns the input when no base is known. */

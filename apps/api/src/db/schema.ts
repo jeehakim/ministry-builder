@@ -1,6 +1,6 @@
-import { AI_ACTIONS } from "@ministry/schema";
+import { AI_ACTIONS, ORG_EVENT_ACTIONS, ORG_ROLES } from "@ministry/schema";
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const createdAt = () =>
   integer("created_at", { mode: "timestamp_ms" })
@@ -110,6 +110,8 @@ export const aiUsage = sqliteTable(
       .notNull()
       .references(() => users.id),
     siteId: text("site_id").references(() => sites.id),
+    /** The organization whose quota the call counted against. Null only on rows older than the org quota. */
+    orgId: text("org_id").references(() => organizations.id),
     action: text("action", { enum: AI_ACTIONS }).notNull(),
     provider: text("provider").notNull(),
     model: text("model").notNull(),
@@ -125,7 +127,7 @@ export const aiUsage = sqliteTable(
     resultJson: text("result_json"),
     createdAt: createdAt(),
   },
-  (t) => [index("ai_usage_user_id_created_at_idx").on(t.userId, t.createdAt)],
+  (t) => [index("ai_usage_user_id_created_at_idx").on(t.userId, t.createdAt), index("ai_usage_org_id_created_at_idx").on(t.orgId, t.createdAt)],
 );
 
 /**
@@ -292,9 +294,177 @@ export const integrationEvents = sqliteTable(
   (t) => [index("integration_events_org_id_kind_created_at_idx").on(t.orgId, t.kind, t.createdAt)],
 );
 
+/**
+ * Who belongs to an organization and with which role. `organizations.owner_user_id` stays the primary
+ * owner for listings and limits; this table is the source of truth for access (see access.ts).
+ */
+export const orgMembers = sqliteTable(
+  "org_members",
+  {
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    role: text("role", { enum: ORG_ROLES }).notNull(),
+    /** Who invited them; null for the founding owner and for staff transfers. Not a foreign key: the inviter's account may be deleted later. */
+    invitedBy: text("invited_by"),
+    joinedAt: integer("joined_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.userId] }), index("org_members_user_id_idx").on(t.userId)],
+);
+
+/**
+ * An emailed invitation to join an organization. Only the SHA-256 of the token is stored; the token itself
+ * exists in the email alone. Accepted rows keep `accepted_at`; expired and revoked ones are deleted.
+ */
+export const orgInvitations = sqliteTable(
+  "org_invitations",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    /** Lowercase. The accepting Clerk user must sign in with this address. */
+    email: text("email").notNull(),
+    role: text("role", { enum: ORG_ROLES }).notNull(),
+    tokenHash: text("token_hash").notNull(),
+    invitedBy: text("invited_by"),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    acceptedAt: integer("accepted_at", { mode: "timestamp_ms" }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("org_invitations_token_hash_unique").on(t.tokenHash), index("org_invitations_org_id_created_at_idx").on(t.orgId, t.createdAt)],
+);
+
+/** Audit log: who did what in an organization. `actor_user_id` is null when the system acted (webhooks). */
+export const orgEvents = sqliteTable(
+  "org_events",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    actorUserId: text("actor_user_id"),
+    action: text("action", { enum: ORG_EVENT_ACTIONS }).notNull(),
+    /** What was acted on: a user id, site id, hostname, provider name. */
+    target: text("target"),
+    /** Small JSON object with the specifics (old and new role, email…). Never secrets. */
+    detailJson: text("detail_json"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("org_events_org_id_created_at_idx").on(t.orgId, t.createdAt)],
+);
+
+/**
+ * A fundraising campaign of a site (platform design, section 3, phase A). Published at
+ * `<site>/give/<slug>/` in every site language; gifts are recorded by staff, never processed here.
+ * Money columns are integers in the currency's minor unit.
+ */
+export const campaigns = sqliteTable(
+  "campaigns",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id),
+    slug: text("slug").notNull(),
+    title: text("title").notNull(),
+    summary: text("summary").notNull().default(""),
+    story: text("story").notNull().default(""),
+    goalAmount: integer("goal_amount").notNull().default(0),
+    currency: text("currency").notNull().default("USD"),
+    /** ISO date (YYYY-MM-DD) or null. */
+    deadline: text("deadline"),
+    /** JSON-encoded ImageRef or null. */
+    coverImageJson: text("cover_image_json"),
+    /** JSON array of minor-unit integers. */
+    suggestedAmountsJson: text("suggested_amounts_json").notNull().default("[]"),
+    giveUrl: text("give_url").notNull().default(""),
+    giveLabel: text("give_label").notNull().default(""),
+    donorWallEnabled: integer("donor_wall_enabled", { mode: "boolean" }).notNull().default(false),
+    thankYouMessage: text("thank_you_message").notNull().default(""),
+    status: text("status", { enum: ["draft", "active", "closed"] })
+      .notNull()
+      .default("draft"),
+    /** JSON object of translation overlays keyed by language code. */
+    translationsJson: text("translations_json").notNull().default("{}"),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [uniqueIndex("campaigns_site_id_slug_unique").on(t.siteId, t.slug), index("campaigns_org_id_idx").on(t.orgId)],
+);
+
+/** A person who gave, deduplicated by email within an organization (the seed of the People module). */
+export const donors = sqliteTable(
+  "donors",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    name: text("name").notNull().default(""),
+    /** Lowercase. */
+    email: text("email").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("donors_org_id_email_unique").on(t.orgId, t.email)],
+);
+
+/**
+ * One recorded gift. `external` came through the organization's processor (recorded by hand or CSV),
+ * `offline` was cash or a check. The platform never moves money, so there is no payment reference here.
+ */
+export const gifts = sqliteTable(
+  "gifts",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id),
+    donorId: text("donor_id").references(() => donors.id),
+    amountCents: integer("amount_cents").notNull(),
+    currency: text("currency").notNull(),
+    source: text("source", { enum: ["external", "offline"] }).notNull(),
+    donorName: text("donor_name").notNull().default(""),
+    donorEmail: text("donor_email").notNull().default(""),
+    /** The donor agreed to be named on the donor wall. */
+    public: integer("public", { mode: "boolean" }).notNull().default(false),
+    note: text("note").notNull().default(""),
+    receivedAt: integer("received_at", { mode: "timestamp_ms" }).notNull(),
+    recordedBy: text("recorded_by")
+      .notNull()
+      .references(() => users.id),
+    /** Set when the thank-you email was accepted by the sender; null when none was attempted. */
+    thankYouSentAt: integer("thank_you_sent_at", { mode: "timestamp_ms" }),
+    thankYouError: text("thank_you_error"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("gifts_campaign_id_received_at_idx").on(t.campaignId, t.receivedAt), index("gifts_org_id_idx").on(t.orgId), index("gifts_donor_id_idx").on(t.donorId)],
+);
+
 export type User = typeof users.$inferSelect;
+export type OrgMember = typeof orgMembers.$inferSelect;
+export type OrgInvitation = typeof orgInvitations.$inferSelect;
+export type OrgEventRow = typeof orgEvents.$inferSelect;
 export type Site = typeof sites.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
 export type Domain = typeof domains.$inferSelect;
 export type ContactEmailVerification = typeof contactEmailVerifications.$inferSelect;
 export type OrgIntegration = typeof orgIntegrations.$inferSelect;
+export type CampaignRow = typeof campaigns.$inferSelect;
+export type GiftRow = typeof gifts.$inferSelect;

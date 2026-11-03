@@ -57,6 +57,20 @@
       "when": 1793658944620,
       "tag": "0007_quota_domains_contact_verify",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793660760951,
+      "tag": "0008_organizations_members",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793666739398,
+      "tag": "0009_fundraising",
+      "breakpoints": true
     }
   ]
 }

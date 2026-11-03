@@ -66,6 +66,23 @@ export function createFakeProvider(): AiProvider {
       return { alt: "People gathered together at a community event", usage: USAGE };
     },
 
+    async campaignStory(input) {
+      const brief = input.brief.trim();
+      return {
+        title: `Campaign for ${input.orgName}`,
+        summary: `Your gift helps ${input.orgName} with: ${brief.slice(0, 80)}`,
+        story: `${brief}\n\nEvery gift goes straight to this work.${input.goalText ? ` Our goal is ${input.goalText}.` : ""}\n\nWill you give today?`,
+        usage: USAGE,
+      };
+    },
+
+    async thankYou(input) {
+      return {
+        message: `Dear {{name}},\n\nThank you for giving to ${input.campaignTitle}. Your gift makes this work possible.${input.notes ? ` ${input.notes.trim()}` : ""}\n\nWith gratitude,\n${input.orgName}`,
+        usage: USAGE,
+      };
+    },
+
     async translate(input) {
       const prefix = `[${input.targetLanguage}] `;
       return { overlay: mapStrings(extractTranslatable(input.document), (s) => `${prefix}${s}`), usage: USAGE };

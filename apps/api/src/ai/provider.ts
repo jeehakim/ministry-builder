@@ -48,6 +48,25 @@ export type TranslateInput = {
   sourceLanguage: string;
 };
 
+export type CampaignStoryInput = {
+  /** What the campaign is for, who it helps, the goal and timing. */
+  brief: string;
+  language: string;
+  orgName: string;
+  /** Goal and deadline as the owner typed them, for the model to mention; already formatted. */
+  goalText?: string;
+  deadline?: string;
+};
+
+export type ThankYouInput = {
+  campaignTitle: string;
+  /** The story, so the thank-you can echo its purpose. May be empty. */
+  story: string;
+  orgName: string;
+  language: string;
+  notes?: string;
+};
+
 export interface AiProvider {
   /** `document` is unvalidated JSON; the route validates it against `SiteDocument`. */
   draft(input: DraftInput): Promise<{ variations: { label: string; document: unknown }[]; usage: AiCallUsage }>;
@@ -56,6 +75,10 @@ export interface AiProvider {
   altText(input: AltTextInput): Promise<{ alt: string; usage: AiCallUsage }>;
   /** `overlay` is unvalidated JSON; the route validates it against `TranslationOverlay`. */
   translate(input: TranslateInput): Promise<{ overlay: unknown; usage: AiCallUsage }>;
+  /** A campaign title, one-line summary and story drafted from a brief. */
+  campaignStory(input: CampaignStoryInput): Promise<{ title: string; summary: string; story: string; usage: AiCallUsage }>;
+  /** A short thank-you message sent to donors of a campaign. Plain text; `{{name}}` marks where the donor's name goes. */
+  thankYou(input: ThankYouInput): Promise<{ message: string; usage: AiCallUsage }>;
 }
 
 /** A provider or network failure. Routes answer 502 with `message`; `detail` is only logged. */

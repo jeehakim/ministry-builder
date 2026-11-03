@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router";
-import { ArrowLeft, BookOpen, Globe, Mail, Sparkles } from "lucide-react";
+import { ArrowLeft, BookOpen, Globe, HeartHandshake, Mail, Sparkles } from "lucide-react";
 import { Brand } from "../components/Brand";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { UserMenu } from "../components/UserMenu";
@@ -12,6 +12,7 @@ export const GUIDES = [
   { path: "/guide/domains", label: "Your own domain", Icon: Globe },
   { path: "/guide/publish", label: "Publishing and hosting", Icon: BookOpen },
   { path: "/guide/email", label: "Email delivery", Icon: Mail },
+  { path: "/guide/fundraising", label: "Fundraising campaigns", Icon: HeartHandshake },
 ] as const;
 
 /** Shared frame for the in-app guides: brand header, guide nav, readable column. */

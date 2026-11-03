@@ -7,7 +7,7 @@ import { SiteDocument, Theme, TranslationOverlay } from "./site.ts";
  * this file; never redefine the shapes locally.
  */
 
-export const AI_ACTIONS = ["draft", "rewrite", "theme", "alt_text", "translate"] as const;
+export const AI_ACTIONS = ["draft", "rewrite", "theme", "alt_text", "translate", "campaign_story", "thank_you"] as const;
 export type AiAction = (typeof AI_ACTIONS)[number];
 
 /** Preset instructions the editor offers on text fields; custom text is also allowed. */
@@ -80,6 +80,8 @@ export const AiUsageResponse = z.object({
   resetsAt: z.string(),
   /** False when the server has no AI key configured. */
   available: z.boolean(),
+  /** The organization's own daily count and limit, present when the request named an organization the caller belongs to. */
+  organization: z.object({ used: z.number().int().nonnegative(), limit: z.number().int().positive() }).optional(),
 });
 export type AiUsageResponse = z.infer<typeof AiUsageResponse>;
 

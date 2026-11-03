@@ -7,24 +7,34 @@ import { newId } from "../src/ids";
 import { adminRoutes } from "../src/routes/admin";
 import { aiRoutes } from "../src/routes/ai";
 import { assetRoutes } from "../src/routes/assets";
+import { campaignRoutes } from "../src/routes/campaigns";
 import { contactEmailRoutes } from "../src/routes/contactEmail";
 import { domainRoutes } from "../src/routes/domains";
 import { integrationRoutes } from "../src/routes/integrations";
 import { messageRoutes } from "../src/routes/messages";
+import { orgRoutes } from "../src/routes/orgs";
 import { publishRoutes } from "../src/routes/publish";
 import { siteRoutes } from "../src/routes/sites";
+import { webhookRoutes } from "../src/routes/webhooks";
 import type { AppEnv } from "../src/types";
 
 /**
  * The real app verifies Clerk JWTs, which needs the network. Tests mount the same route
- * modules behind a stand-in middleware that trusts an `x-test-user: <id>[:admin]` header.
+ * modules behind a stand-in middleware that trusts an `x-test-user: <id>[:admin]` header,
+ * plus an optional `x-test-email` for the signed-in address (invitations match on it).
  */
 const fakeAuth = createMiddleware<AppEnv>(async (c, next) => {
   const [id, roleHeader = "member"] = (c.req.header("x-test-user") ?? "").split(":");
   const role = roleHeader === "admin" ? "admin" : "member";
   if (!id) return c.json({ error: "unauthenticated" }, 401);
-  await drizzle(c.env.DB).insert(users).values({ id, role }).onConflictDoNothing();
-  c.set("user", { id, email: null, role });
+  const email = c.req.header("x-test-email") ?? null;
+  const db = drizzle(c.env.DB);
+  if (email) {
+    await db.insert(users).values({ id, role, email }).onConflictDoUpdate({ target: users.id, set: { email } });
+  } else {
+    await db.insert(users).values({ id, role }).onConflictDoNothing();
+  }
+  c.set("user", { id, email, role });
   await next();
 });
 
@@ -33,15 +43,20 @@ app.use("/sites", fakeAuth);
 app.use("/sites/*", fakeAuth);
 app.use("/ai/*", fakeAuth);
 app.use("/admin/*", fakeAuth);
+app.use("/orgs", fakeAuth);
 app.use("/orgs/*", fakeAuth);
+app.use("/invitations/:token/accept", fakeAuth);
 app.route("/", siteRoutes);
 app.route("/", assetRoutes);
 app.route("/", aiRoutes);
+app.route("/", campaignRoutes);
 app.route("/", publishRoutes);
 app.route("/", domainRoutes);
 app.route("/", messageRoutes);
 app.route("/", contactEmailRoutes);
 app.route("/", integrationRoutes);
+app.route("/", orgRoutes);
+app.route("/", webhookRoutes);
 app.route("/", adminRoutes);
 
 export function call(
@@ -53,6 +68,13 @@ export function call(
   const headers = new Headers(init.headers);
   if (user) headers.set("x-test-user", user);
   return Promise.resolve(app.request(path, { ...init, headers }, bindings));
+}
+
+/** Like `call`, with the signed-in email the fake auth should report. */
+export function callAs(user: string, email: string, path: string, init: RequestInit = {}, bindings: object = env): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set("x-test-email", email);
+  return call(user, path, { ...init, headers }, bindings);
 }
 
 export function jsonInit(method: string, body: unknown): RequestInit {
