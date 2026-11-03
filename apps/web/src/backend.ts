@@ -2,15 +2,26 @@ import {
   emptySiteDocument,
   SiteDocument,
   type AiAltTextResponse,
+  type AiCampaignStoryRequest,
+  type AiCampaignStoryResponse,
   type AiDraftRequest,
   type AiDraftResponse,
   type AiRewriteRequest,
   type AiRewriteResponse,
   type AiThemeRequest,
   type AiThemeResponse,
+  type AiThankYouRequest,
+  type AiThankYouResponse,
   type AiTranslateResponse,
   type AcceptInvitationResponse,
   type AiUsageResponse,
+  type CampaignInput,
+  type CampaignTotals,
+  type CampaignWithTotals,
+  type GiftImportResponse,
+  type GiftInput,
+  type GiftListResponse,
+  type GiftResponse,
   type CreateInvitationRequest,
   type CreateInvitationResponse,
   type ImageRef,
@@ -34,6 +45,7 @@ import {
   type DomainList,
   type GetToken,
   type LoadedSite,
+  type OrgCampaignList,
   type PublishResult,
   type SiteDomain,
   type SiteSummary,
@@ -53,6 +65,24 @@ export interface AiBackend {
   altText(siteId: string, assetKey: string): Promise<AiAltTextResponse>;
   /** Translates the whole page into `language`. The server also saves the overlay as a new version. */
   translate(siteId: string, language: string): Promise<AiTranslateResponse>;
+  /** Drafts a campaign title, summary and story from a brief. */
+  campaignStory(siteId: string, campaignId: string, request: AiCampaignStoryRequest): Promise<AiCampaignStoryResponse>;
+  /** Writes the thank-you note donors of a campaign receive. */
+  thankYou(siteId: string, campaignId: string, request: AiThankYouRequest): Promise<AiThankYouResponse>;
+}
+
+/** Fundraising campaigns and recorded gifts. Only the API backend has them. */
+export interface FundraisingBackend {
+  listForOrg(orgId: string): Promise<OrgCampaignList>;
+  list(siteId: string): Promise<CampaignWithTotals[]>;
+  get(siteId: string, campaignId: string): Promise<CampaignWithTotals>;
+  create(siteId: string, input: CampaignInput): Promise<CampaignWithTotals>;
+  update(siteId: string, campaignId: string, input: CampaignInput): Promise<CampaignWithTotals>;
+  remove(siteId: string, campaignId: string): Promise<void>;
+  listGifts(siteId: string, campaignId: string): Promise<GiftListResponse>;
+  addGift(siteId: string, campaignId: string, input: GiftInput): Promise<GiftResponse>;
+  removeGift(siteId: string, campaignId: string, giftId: string): Promise<CampaignTotals>;
+  importGifts(siteId: string, campaignId: string, csv: string): Promise<GiftImportResponse>;
 }
 
 /** Customer domains on hosted sites. Only the API backend has them. */
@@ -131,6 +161,8 @@ export interface Backend {
   contactEmail?: ContactEmailBackend;
   /** Present in API mode only; local mode has no hosted form, so nothing to deliver. */
   integrations?: IntegrationsBackend;
+  /** Present in API mode only; campaigns live on the server and publish with the site. */
+  fundraising?: FundraisingBackend;
   /** Present in API mode only; local mode is a single private site with no one to share it with. */
   orgs?: OrgsBackend;
   /** Publishes the saved document on Ministry Sites. API mode only. */
@@ -168,6 +200,20 @@ export function createApiBackend(getToken: GetToken): Backend {
       theme: (siteId, request) => api.aiTheme(siteId, request),
       altText: (siteId, assetKey) => api.aiAltText(siteId, assetKey),
       translate: (siteId, language) => api.aiTranslate(siteId, language),
+      campaignStory: (siteId, campaignId, request) => api.aiCampaignStory(siteId, campaignId, request),
+      thankYou: (siteId, campaignId, request) => api.aiThankYou(siteId, campaignId, request),
+    },
+    fundraising: {
+      listForOrg: (orgId) => api.listOrgCampaigns(orgId),
+      list: (siteId) => api.listCampaigns(siteId),
+      get: (siteId, campaignId) => api.getCampaign(siteId, campaignId),
+      create: (siteId, input) => api.createCampaign(siteId, input),
+      update: (siteId, campaignId, input) => api.updateCampaign(siteId, campaignId, input),
+      remove: (siteId, campaignId) => api.deleteCampaign(siteId, campaignId),
+      listGifts: (siteId, campaignId) => api.listGifts(siteId, campaignId),
+      addGift: (siteId, campaignId, input) => api.addGift(siteId, campaignId, input),
+      removeGift: (siteId, campaignId, giftId) => api.deleteGift(siteId, campaignId, giftId),
+      importGifts: (siteId, campaignId, csv) => api.importGifts(siteId, campaignId, csv),
     },
     messages: {
       list: (siteId) => api.listMessages(siteId),
@@ -280,6 +326,7 @@ export function createLocalBackend(): Backend {
               orgName: doc.meta.orgName,
               updatedAt: new Date().toISOString(),
               publishedUrl: null,
+              publishedAt: null,
             },
           ]
         : [];

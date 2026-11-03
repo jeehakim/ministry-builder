@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate } from "react-router";
-import { ArrowRight, Globe, Loader2, MoreHorizontal, Plus, Settings, Trash2 } from "lucide-react";
+import { ArrowRight, Globe, HeartHandshake, Loader2, MoreHorizontal, Plus, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,16 +11,12 @@ import type { SiteSummary } from "./api";
 import { LOCAL_SITE_ID } from "./backend";
 import { useBackend } from "./backend-context";
 import { ApiUnreachableBanner } from "./components/ApiUnreachableBanner";
-import { Brand } from "./components/Brand";
 import { DeleteSiteDialog } from "./components/DeleteSiteDialog";
-import { HelpMenu } from "./components/HelpMenu";
+import { DashboardHeader } from "./components/DashboardHeader";
 import { isNetworkError } from "./lib/errors";
 import { can } from "./lib/roles";
 import { useOrg } from "./orgs/OrgContext";
-import { OrgSwitcher } from "./orgs/OrgSwitcher";
-import { ThemeToggle } from "./components/ThemeToggle";
 import { PublishedBadge } from "./components/PublishedBadge";
-import { UserMenu } from "./components/UserMenu";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -129,19 +125,7 @@ export function Home() {
 
   return (
     <div className="min-h-dvh bg-muted/30">
-      <header className="border-b bg-background">
-        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
-          <div className="flex min-w-0 items-center gap-2">
-            <Brand />
-            <OrgSwitcher />
-          </div>
-          <div className="flex items-center gap-1">
-            <HelpMenu />
-            <ThemeToggle />
-            <UserMenu />
-          </div>
-        </div>
-      </header>
+      <DashboardHeader area="sites" showFundraising={Boolean(backend.fundraising)} />
 
       <main className="mx-auto max-w-5xl px-4 py-10">
         <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
@@ -220,7 +204,7 @@ export function Home() {
                         <span className="grid size-8 place-items-center rounded-lg bg-brand-soft text-brand">
                           <Globe className="size-4" aria-hidden="true" />
                         </span>
-                        {backend.integrations || (backend.deleteSite && can(s.role, "deleteSite")) ? (
+                        {backend.fundraising || backend.integrations || (backend.deleteSite && can(s.role, "deleteSite")) ? (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon-sm" aria-label={`More actions for ${s.orgName}`} className="text-muted-foreground">
@@ -228,6 +212,14 @@ export function Home() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              {backend.fundraising ? (
+                                <DropdownMenuItem asChild>
+                                  <Link to="/fundraising" onClick={() => s.orgId && org.select(s.orgId)}>
+                                    <HeartHandshake />
+                                    Fundraising
+                                  </Link>
+                                </DropdownMenuItem>
+                              ) : null}
                               {backend.integrations ? (
                                 <DropdownMenuItem asChild>
                                   <Link to={`/sites/${encodeURIComponent(s.id)}/settings`}>

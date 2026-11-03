@@ -1,6 +1,7 @@
 import type { Theme } from "@ministry/schema";
 import { themeVars } from "../util";
 import { CONTACT_FORM_CSS } from "../ContactForm";
+import { CAMPAIGN_CSS } from "../campaign";
 
 /** Black or white, whichever reads better on `color`. Anything that is not a hex color falls back to near-black. */
 function onColor(color: string): string {
@@ -118,5 +119,8 @@ p{margin:0 0 1em}
 .foot p{margin:0;opacity:.8}
 .foot p span::before{content:"\\00B7";margin:0 .6em}
 
-${CONTACT_FORM_CSS}`;
+${CONTACT_FORM_CSS}
+${CAMPAIGN_CSS}.give .campaigns{grid-column:1/-1}
+.give .campaign-card{color:#1a1a1a}
+`;
 }

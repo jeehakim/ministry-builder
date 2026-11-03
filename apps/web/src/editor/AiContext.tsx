@@ -1,8 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
+  AiCampaignStoryRequest,
+  AiCampaignStoryResponse,
   AiDraftRequest,
   AiDraftResponse,
   AiRewriteRequest,
+  AiThankYouRequest,
   AiThemeRequest,
   AiThemeResponse,
   AiTranslateResponse,
@@ -48,7 +51,12 @@ export interface AiContextValue {
   runAltText(key: string, imageSrc: string): Promise<string | null>;
   runTheme(request: AiThemeRequest): Promise<AiThemeResponse | null>;
   runTranslate(language: string): Promise<AiTranslateResponse | null>;
+  runCampaignStory(campaignId: string, request: AiCampaignStoryRequest): Promise<AiCampaignStoryResponse | null>;
+  runThankYou(campaignId: string, request: AiThankYouRequest): Promise<string | null>;
 }
+
+export const CAMPAIGN_STORY_BUSY_KEY = "campaign-story";
+export const THANK_YOU_BUSY_KEY = "thank-you";
 
 const noop = async () => {};
 const unavailable = async () => null;
@@ -66,6 +74,8 @@ const INERT: AiContextValue = {
   runAltText: unavailable,
   runTheme: unavailable,
   runTranslate: unavailable,
+  runCampaignStory: unavailable,
+  runThankYou: unavailable,
 };
 
 const AiContext = createContext<AiContextValue>(INERT);
@@ -163,6 +173,11 @@ export function AiProvider({ orgId = null, readOnly = false, children }: { orgId
       },
       runTheme: (request) => run(THEME_BUSY_KEY, (client) => client.theme(siteId, request)),
       runTranslate: (language) => run(TRANSLATE_BUSY_KEY, (client) => client.translate(siteId, language)),
+      runCampaignStory: (campaignId, request) => run(CAMPAIGN_STORY_BUSY_KEY, (client) => client.campaignStory(siteId, campaignId, request)),
+      runThankYou: async (campaignId, request) => {
+        const result = await run(THANK_YOU_BUSY_KEY, (client) => client.thankYou(siteId, campaignId, request));
+        return result ? result.message : null;
+      },
     };
   }, [ai, readOnly, usage, busy, refreshUsage, run, siteId]);
 

@@ -51,7 +51,7 @@ Set `vars.ALLOWED_ORIGIN` to `https://build.shofar.io` for production and uncomm
 | `POST /sites/:id/ai/theme` | editor | `AiThemeRequest` -> `{ theme, rationale }` |
 | `POST /sites/:id/ai/alt-text` | editor | `{ assetKey }` (must be under `sites/<id>/`) -> `{ alt }` |
 | `POST /sites/:id/ai/translate` | editor | `AiTranslateRequest` -> `{ language, overlay }`; 400 for the primary language; saves the overlay into `translations[language]`, adds the language to `meta.languages` and moves the current version |
-| `POST /sites/:id/publish` | editor | Renders the current version into the `PUBLISHED` bucket (pages, thank-you pages, `robots.txt`, `sitemap.xml`); returns `{ url, publishedAt }`. 429 with `Retry-After` past `MAX_PUBLISHES_PER_HOUR` |
+| `POST /sites/:id/publish` | editor | Renders the current version into the `PUBLISHED` bucket (pages, thank-you pages, a page per active campaign at `give/<slug>/` in every language with cards in the Give section, `robots.txt`, `sitemap.xml`); returns `{ url, publishedAt }`. 429 with `Retry-After` past `MAX_PUBLISHES_PER_HOUR` |
 | `POST /sites/:id/unpublish` | editor | Removes the published objects; site returns to `draft` |
 | `GET /sites/:id/domains` | viewer | `{ domains, cnameTarget, enabled }`; each domain has `hostname`, `kind`, `sslStatus`, `ownershipVerifiedAt`, `verifiedAt`, `active`, `expiresAt` and the `txt` and `dns` records to create. Also deletes unproved domains older than 7 days (any site) |
 | `POST /sites/:id/domains` | admin | `{ hostname, kind?: "primary" \| "redirect" }`; records the domain with a fresh ownership token and returns `{ domain }` (201). Nothing is created at Cloudflare yet. 400 bad hostname, 409 taken or second primary, 429 over `MAX_DOMAINS_PER_SITE` or `MAX_DOMAINS_PER_USER` (admins exempt from the latter), 503 not configured |
@@ -78,6 +78,18 @@ Set `vars.ALLOWED_ORIGIN` to `https://build.shofar.io` for production and uncomm
 | `POST /orgs/:id/transfer-ownership` | owner | `{ userId }` (a member); they become owner, the caller steps down to admin -> `{ orgId, ownerUserId }` |
 | `GET /orgs/:id/events?limit=100` | viewer | `{ events: [{ id, action, actorUserId, actorEmail, target, detail, createdAt }] }`, newest first (limit 1-500) |
 | `POST /webhooks/clerk` | Svix signature | Clerk webhook endpoint; handles `user.deleted` (see "Organizations and roles"). 401 bad signature, 503 without `CLERK_WEBHOOK_SECRET` |
+| `GET /sites/:id/campaigns` | viewer | `{ campaigns: CampaignWithTotals[] }` (newest first; totals from the gifts table) |
+| `GET /orgs/:id/campaigns` | viewer | Every campaign of the organization across its sites, each with `siteSlug`, plus `sites: [{ id, slug, published }]` |
+| `POST /sites/:id/campaigns` | editor | `CampaignInput`; the slug derives from the title when omitted (suffix on a clash; 409 for an explicit taken slug). 400 for a cover image that is not this site's upload or a translation language the site lacks. Returns `{ campaign }` (201) |
+| `GET` / `PUT /sites/:id/campaigns/:cid` | viewer / editor | Read or replace (`CampaignInput`; the slug cannot change) one campaign |
+| `DELETE /sites/:id/campaigns/:cid` | admin | Deletes the campaign with its recorded gifts |
+| `GET /sites/:id/campaigns/:cid/totals` | viewer | `{ raisedAmount, giftCount, goalAmount, currency, percent }`, minor units |
+| `GET /sites/:id/campaigns/:cid/gifts?limit=200` | viewer | `{ gifts, totals }`, newest first (limit 1-2000) |
+| `POST /sites/:id/campaigns/:cid/gifts` | editor | `GiftInput`; dedupes the donor by email per organization and, with an email and a configured sender, emails the campaign's thank-you note (outcome on `thankYouSentAt` / `thankYouError`, never a failure). Returns `{ gift, totals }` (201) |
+| `DELETE /sites/:id/campaigns/:cid/gifts/:gid` | editor | `{ ok, totals }` |
+| `POST /sites/:id/campaigns/:cid/gifts/import` | editor | `{ csv }` or a `text/csv` body with columns `amount` (required), `name`, `email`, `date`, `source`, `public`, `note`; at most 2000 rows. All rows are validated first: 400 `{ imported: 0, errors: [{ row, message }], totals }` imports nothing. No thank-you emails |
+| `POST /sites/:id/campaigns/:cid/ai/story` | editor | `AiCampaignStoryRequest` -> `{ title, summary, story }` (counts against the AI quota) |
+| `POST /sites/:id/campaigns/:cid/ai/thank-you` | editor | `AiThankYouRequest` -> `{ message }` with a `{{name}}` placeholder |
 | `GET /admin/sites` | platform admin | Every site with org name, owner, status and published URL |
 | `POST /orgs/:id/transfer` | platform admin | `{ email }`; staff hand-over: looks the user up in Clerk, makes them an owner member and removes every previous owner from the organization |
 
@@ -112,7 +124,7 @@ Every AI call reserves its slot before the provider is called: a single `INSERT 
 
 The global cap is a backstop, not a budget: set a **hard spend limit on the provider project** as well (OpenAI: *Settings > Limits > Monthly budget* with a hard limit; Anthropic: *Console > Plans & billing > spend limits*), sized to the global cap times the dearest call, so a bug or a leaked key cannot run up a bill.
 
-Published sites are served by this Worker before CORS and auth run, from the `PUBLISHED` bucket only. A request host is resolved in this order: a customer domain from the `domains` table (a `primary` domain serves the site at `/`, its language pages at `/<lang>/`, the thank-you pages at `/thanks/` and `/<lang>/thanks/`, and takes contact-form posts at `/contact`; a `redirect` domain answers 301 to the primary), then `PUBLIC_SITES_HOST` (`sites.shofar.io/<slug>/`) and its subdomain form (`<slug>.sites.shofar.io/`). `PUBLIC_API_HOST` is never looked up as a customer domain. Published pages contain only document-relative links (`relativizeRootLinks` in `src/published.ts` enforces it), so the same `index.html` works at `/` and at `/<slug>/`.
+Published sites are served by this Worker before CORS and auth run, from the `PUBLISHED` bucket only. A request host is resolved in this order: a customer domain from the `domains` table (a `primary` domain serves the site at `/`, its language pages at `/<lang>/`, the thank-you pages at `/thanks/` and `/<lang>/thanks/`, campaign pages at `/give/<campaign>/` and `/<lang>/give/<campaign>/`, and takes contact-form posts at `/contact`; a `redirect` domain answers 301 to the primary), then `PUBLIC_SITES_HOST` (`sites.shofar.io/<slug>/`) and its subdomain form (`<slug>.sites.shofar.io/`). `PUBLIC_API_HOST` is never looked up as a customer domain. Published pages contain only document-relative links (`relativizeRootLinks` in `src/published.ts` enforces it), so the same `index.html` works at `/` and at `/<slug>/`.
 
 ### Contact form
 

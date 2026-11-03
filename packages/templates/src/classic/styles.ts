@@ -1,6 +1,7 @@
 import type { Theme } from "@ministry/schema";
 import { themeVars } from "../util";
 import { CONTACT_FORM_CSS } from "../ContactForm";
+import { CAMPAIGN_CSS } from "../campaign";
 
 export function classicCss(theme: Theme): string {
   return `${themeVars(theme)}
@@ -62,5 +63,7 @@ blockquote footer{margin-top:8px;font-style:normal;opacity:.75}
 .site-footer{padding:32px 0;font-size:.9rem;opacity:.7;text-align:center}
 .hidden{display:none}
 
-${CONTACT_FORM_CSS}`;
+${CONTACT_FORM_CSS}
+${CAMPAIGN_CSS}.give .campaigns{margin-top:32px}
+`;
 }

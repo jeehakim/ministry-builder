@@ -36,7 +36,7 @@ const MAX_AI_BODY_BYTES = 32 * 1024;
 const tooLarge = bodyLimit({ maxSize: MAX_AI_BODY_BYTES, onError: (c) => c.json({ error: "Body too large" }, 413) });
 
 type Ctx = Context<AppEnv>;
-type Guard = { site: Site; provider: AiProvider; orgName: string };
+export type Guard = { site: Site; provider: AiProvider; orgName: string };
 
 function templateChoices(): TemplateChoice[] {
   return Object.values(templates).map(({ id, name, description }) => ({ id, name, description }));
@@ -55,7 +55,7 @@ function knownTemplateId(id: string): string {
   return templateChoices()[0]?.id ?? "classic";
 }
 
-async function parseBody<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.output<S> | Response> {
+export async function parseBody<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.output<S> | Response> {
   const body: unknown = await c.req.json().catch(() => undefined);
   if (body === undefined) return c.json({ error: "Body must be valid JSON" }, 400);
   const parsed = schema.safeParse(body);
@@ -68,7 +68,7 @@ async function parseBody<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.o
  * taken later, by `callProvider`, once the body has been validated, so a rejected request spends nothing.
  * Returns the loaded pieces or the Response to send.
  */
-async function guard(c: Ctx): Promise<Guard | Response> {
+export async function guard(c: Ctx): Promise<Guard | Response> {
   const db = drizzle(c.env.DB);
   const access = await requireSiteRole(c, db, c.req.param("id") ?? "", "editor");
   if (access instanceof Response) return access;
@@ -93,7 +93,7 @@ function audit(value: unknown): string | null {
  * The statement that turns the call's reservation into its finished `ai_usage` row. Tokens were spent
  * whether or not the output turns out usable, so callers run it on every path after the provider answered.
  */
-function finishUsage(
+export function finishUsage(
   db: ReturnType<typeof drizzle>,
   usageId: string,
   usage: AiCallUsage,
@@ -109,7 +109,7 @@ function finishUsage(
  * Reserves a quota slot, runs the provider call and logs tokens and latency. Over quota answers 429;
  * a provider failure gives the slot back and answers 502. On success the caller finishes the usage row.
  */
-async function callProvider<T extends { usage: AiCallUsage }>(
+export async function callProvider<T extends { usage: AiCallUsage }>(
   c: Ctx,
   site: Pick<Site, "id" | "orgId">,
   action: AiAction,
@@ -317,7 +317,7 @@ aiRoutes.post("/sites/:id/ai/alt-text", tooLarge, async (c) => {
   return c.json(response);
 });
 
-async function currentDocument(db: ReturnType<typeof drizzle>, site: Site): Promise<SiteDocument | null> {
+export async function currentDocument(db: ReturnType<typeof drizzle>, site: Site): Promise<SiteDocument | null> {
   if (!site.currentVersionId) return null;
   const [version] = await db
     .select({ document: siteVersions.document })
