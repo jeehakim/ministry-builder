@@ -62,13 +62,13 @@ The copilot works, but it lives in buttons: a "Draft with AI" button that regene
 | Listing is scoped to the caller's organizations | Yes |
 | Published files are isolated by site id in R2; hosting resolves by slug or verified host | Yes |
 | Staff admin is a separate role; staff token is constant-time compared | Yes |
-| AI quota | Per **user** per day, not per organization |
-| Organization has members, roles, invitations | **No**: one owner per organization |
-| Switch between organizations | **No**: a user's sites are listed across their organizations, but there is no org context |
-| Account deletion / Clerk user.deleted webhook | **No** |
-| Audit log of who changed what | **No** (AI calls are logged; edits are versioned with `created_by`) |
+| AI quota | Per organization per day (`AI_DAILY_LIMIT_ORG`), with the per-user limit as a guard; `ai_usage.org_id` |
+| Organization has members, roles, invitations | Yes: `org_members` with owner/admin/editor/viewer, hashed-token email invitations (`org_invitations`), role-aware checks in `access.ts` |
+| Switch between organizations | Yes: org switcher in the app headers backed by `GET /orgs`; Home lists the current organization's sites |
+| Account deletion / Clerk user.deleted webhook | Yes: `POST /webhooks/clerk` (Svix-verified) removes memberships, anonymizes the email, promotes a replacement owner |
+| Audit log of who changed what | Yes: `org_events`, shown under Settings > Activity |
 
-Isolation is correct for the single-owner model. The gap is the team model, which an all-in-one platform needs on day one: a treasurer records a gift, a volunteer edits the events, the pastor approves.
+The rows above were "No" until the organizations work landed (see `apps/api/README.md`, "Organizations and roles"). Still open from the target model: `slug`, `plan` and `limits` on the organization, org-scoped URLs (`/o/<slug>/...`), and the staff console.
 
 ### Target model
 

@@ -28,7 +28,7 @@ import {
 type Load = { kind: "loading" } | { kind: "error"; message: string; network: boolean } | { kind: "ready"; data: IntegrationsResponse };
 
 /** The "bring your own Resend" panel: who delivers contact form email, plus connect, from address, test and disconnect. */
-export function EmailDeliveryPanel({ orgId, contactEmail }: { orgId: string; contactEmail: string | null }) {
+export function EmailDeliveryPanel({ orgId, contactEmail, canManage = true }: { orgId: string; contactEmail: string | null; canManage?: boolean }) {
   const { integrations } = useBackend();
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   // Bumped by the banner's retry button to load again.
@@ -67,7 +67,9 @@ export function EmailDeliveryPanel({ orgId, contactEmail }: { orgId: string; con
   return (
     <div className="space-y-5">
       <StatusCard sender={data.activeSender} />
-      {data.encryptionAvailable ? (
+      {!canManage ? (
+        <InfoBox>Only admins and owners can change how email is delivered.</InfoBox>
+      ) : data.encryptionAvailable ? (
         <>
           <ConnectCard orgId={orgId} integrations={integrations} data={data} onData={setData} />
           {data.resend ? <FromCard orgId={orgId} integrations={integrations} resend={data.resend} onData={setData} /> : null}

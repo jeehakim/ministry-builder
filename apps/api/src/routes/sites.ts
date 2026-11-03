@@ -3,8 +3,24 @@ import { and, count, desc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { loadAuthorizedSite } from "../access";
-import { aiUsage, assets, contactEmailVerifications, domains, formSubmissions, integrationEvents, orgIntegrations, organizations, publishEvents, siteVersions, sites } from "../db/schema";
+import { loadOrgAccess, requireSiteRole } from "../access";
+import {
+  aiUsage,
+  assets,
+  contactEmailVerifications,
+  domains,
+  formSubmissions,
+  integrationEvents,
+  orgEvents,
+  orgIntegrations,
+  orgInvitations,
+  orgMembers,
+  organizations,
+  publishEvents,
+  siteVersions,
+  sites,
+} from "../db/schema";
+import { orgEventInsert } from "../events";
 import { newId } from "../ids";
 import { limitsFor } from "../limits";
 import { deleteKeys, listKeys, publishedPrefix, publishedUrlFor } from "../published";
@@ -40,14 +56,18 @@ function isUniqueViolation(err: unknown): boolean {
 
 export const siteRoutes = new Hono<AppEnv>();
 
+/** The caller's sites across every organization they belong to, or those of one organization with `?orgId=`. */
 siteRoutes.get("/sites", async (c) => {
   const db = drizzle(c.env.DB);
+  const orgId = c.req.query("orgId");
+  const member = and(eq(orgMembers.orgId, organizations.id), eq(orgMembers.userId, c.var.user.id));
   const rows = await db
     .select({
       id: sites.id,
       slug: sites.slug,
       orgId: organizations.id,
       orgName: organizations.name,
+      role: orgMembers.role,
       templateId: sites.templateId,
       plan: sites.plan,
       status: sites.status,
@@ -59,7 +79,8 @@ siteRoutes.get("/sites", async (c) => {
     })
     .from(sites)
     .innerJoin(organizations, eq(sites.orgId, organizations.id))
-    .where(eq(organizations.ownerUserId, c.var.user.id))
+    .innerJoin(orgMembers, member)
+    .where(orgId ? eq(organizations.id, orgId) : undefined)
     .orderBy(desc(sites.updatedAt));
   return c.json({
     sites: rows.map(({ publishedPath, ...row }) => ({ ...row, publishedUrl: publishedUrlFor(c.env, publishedPath) })),
@@ -69,8 +90,12 @@ siteRoutes.get("/sites", async (c) => {
 siteRoutes.post("/sites", bodyLimit({ maxSize: 16 * 1024, onError: (c) => c.json({ error: "Body too large" }, 413) }), async (c) => {
   const body: unknown = await c.req.json().catch(() => null);
   const input = body && typeof body === "object" ? (body as Record<string, unknown>) : null;
-  const orgName = typeof input?.["orgName"] === "string" ? input["orgName"].trim() : "";
-  if (!orgName || orgName.length > 120) {
+  const requestedOrgId = input?.["orgId"];
+  if (requestedOrgId !== undefined && (typeof requestedOrgId !== "string" || requestedOrgId === "")) {
+    return c.json({ error: "orgId must be a string" }, 400);
+  }
+  let orgName = typeof input?.["orgName"] === "string" ? input["orgName"].trim() : "";
+  if ((!orgName && requestedOrgId === undefined) || orgName.length > 120) {
     return c.json({ error: "orgName is required (1-120 characters)" }, 400);
   }
   const requestedSlug = input?.["slug"];
@@ -80,6 +105,16 @@ siteRoutes.post("/sites", bodyLimit({ maxSize: 16 * 1024, onError: (c) => c.json
 
   const db = drizzle(c.env.DB);
   const user = c.var.user;
+
+  // Inside an existing organization the caller must be an admin or owner there; the site takes the organization's name by default.
+  let targetOrg: { id: string } | null = null;
+  if (typeof requestedOrgId === "string") {
+    const access = await loadOrgAccess(db, user, requestedOrgId);
+    if (!access) return c.json({ error: "Organization not found" }, 404);
+    if (!["admin", "owner"].includes(access.role)) return c.json({ error: "You need admin access to add a site to this organization", role: access.role }, 403);
+    targetOrg = { id: access.org.id };
+    if (!orgName) orgName = access.org.name;
+  }
 
   // Sites across every organization the user owns. Staff (admins) build sites for others and are exempt.
   if (user.role !== "admin") {
@@ -102,11 +137,15 @@ siteRoutes.post("/sites", bodyLimit({ maxSize: 16 * 1024, onError: (c) => c.json
     slug = `${slug.slice(0, 35)}-${crypto.randomUUID().slice(0, 4)}`;
   }
 
-  const [existingOrg] = await db
-    .select({ id: organizations.id })
-    .from(organizations)
-    .where(and(eq(organizations.ownerUserId, user.id), eq(organizations.name, orgName)))
-    .limit(1);
+  const existingOrg =
+    targetOrg ??
+    (
+      await db
+        .select({ id: organizations.id })
+        .from(organizations)
+        .where(and(eq(organizations.ownerUserId, user.id), eq(organizations.name, orgName)))
+        .limit(1)
+    )[0];
   const orgId = existingOrg?.id ?? newId("org");
 
   const document = emptySiteDocument(orgName);
@@ -131,8 +170,10 @@ siteRoutes.post("/sites", bodyLimit({ maxSize: 16 * 1024, onError: (c) => c.json
     if (existingOrg) {
       await db.batch([insertSite, insertVersion]);
     } else {
+      // A new organization: the creator is its first owner.
       await db.batch([
         db.insert(organizations).values({ id: orgId, name: orgName, ownerUserId: user.id, createdBy: user.id }),
+        db.insert(orgMembers).values({ orgId, userId: user.id, role: "owner", invitedBy: null }),
         insertSite,
         insertVersion,
       ]);
@@ -148,8 +189,9 @@ siteRoutes.post("/sites", bodyLimit({ maxSize: 16 * 1024, onError: (c) => c.json
 
 siteRoutes.get("/sites/:id", async (c) => {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id"), "viewer");
+  if (access instanceof Response) return access;
+  const { site } = access;
 
   let document: unknown = null;
   if (site.currentVersionId) {
@@ -161,7 +203,7 @@ siteRoutes.get("/sites/:id", async (c) => {
     if (version) document = JSON.parse(version.document);
   }
   const messageCount = await countMessages(db, site.id);
-  return c.json({ site: { ...site, publishedUrl: publishedUrlFor(c.env, site.publishedPath), messageCount }, document });
+  return c.json({ site: { ...site, publishedUrl: publishedUrlFor(c.env, site.publishedPath), messageCount, role: access.role }, document });
 });
 
 siteRoutes.put(
@@ -170,8 +212,9 @@ siteRoutes.put(
   async (c) => {
     const db = drizzle(c.env.DB);
     const user = c.var.user;
-    const site = await loadAuthorizedSite(db, user, c.req.param("id"));
-    if (!site) return c.json({ error: "Site not found" }, 404);
+    const access = await requireSiteRole(c, db, c.req.param("id"), "editor");
+    if (access instanceof Response) return access;
+    const { site } = access;
 
     const body: unknown = await c.req.json().catch(() => undefined);
     if (body === undefined) return c.json({ error: "Body must be valid JSON" }, 400);
@@ -204,8 +247,9 @@ siteRoutes.put(
 
 siteRoutes.get("/sites/:id/versions", async (c) => {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id"), "viewer");
+  if (access instanceof Response) return access;
+  const { site } = access;
 
   const versions = await db
     .select({ id: siteVersions.id, createdAt: siteVersions.createdAt })
@@ -222,8 +266,9 @@ siteRoutes.get("/sites/:id/versions", async (c) => {
  */
 siteRoutes.delete("/sites/:id", async (c) => {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id"), "owner");
+  if (access instanceof Response) return access;
+  const { site } = access;
 
   // Objects first, then rows: a retry after an interrupted delete still finds the site.
   await deleteKeys(c.env.PUBLISHED, await listKeys(c.env.PUBLISHED, publishedPrefix(site.id)));
@@ -247,14 +292,19 @@ siteRoutes.delete("/sites/:id", async (c) => {
     db.delete(assets).where(eq(assets.siteId, site.id)),
     db.delete(siteVersions).where(eq(siteVersions.siteId, site.id)),
     db.delete(sites).where(eq(sites.id, site.id)),
+    orgEventInsert(db, { orgId: site.orgId, actorUserId: c.var.user.id, action: "site.deleted", target: site.id, detail: { slug: site.slug } }),
   ]);
 
   const [remaining] = await db.select({ n: sql<number>`count(*)` }).from(sites).where(eq(sites.orgId, site.orgId));
   if ((remaining?.n ?? 0) === 0) {
-    // The organization's stored provider key and its limit counters go with it.
+    // The organization goes with its last site: its stored provider key, limit counters, members, invitations and audit log.
     await db.batch([
+      db.update(aiUsage).set({ orgId: null }).where(eq(aiUsage.orgId, site.orgId)),
       db.delete(orgIntegrations).where(eq(orgIntegrations.orgId, site.orgId)),
       db.delete(integrationEvents).where(eq(integrationEvents.orgId, site.orgId)),
+      db.delete(orgInvitations).where(eq(orgInvitations.orgId, site.orgId)),
+      db.delete(orgEvents).where(eq(orgEvents.orgId, site.orgId)),
+      db.delete(orgMembers).where(eq(orgMembers.orgId, site.orgId)),
       db.delete(organizations).where(eq(organizations.id, site.orgId)),
     ]);
   }

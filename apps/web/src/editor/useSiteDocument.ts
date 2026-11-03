@@ -3,6 +3,7 @@ import { SiteDocument, type Section, type SectionType } from "@ministry/schema";
 import type { SiteInfo } from "../api";
 import { useBackend } from "../backend-context";
 import { isNetworkError } from "../lib/errors";
+import { can } from "../lib/roles";
 import { useBeforeUnloadGuard } from "../lib/useBeforeUnloadGuard";
 import { addSection, formatIssue, moveSection, removeSection, reorderSection, replaceSection, toggleHidden } from "./documentOps";
 
@@ -65,6 +66,8 @@ export function useSiteDocument(siteId: string) {
 
   const doc = load.kind === "ready" ? load.doc : null;
   latestDoc.current = doc;
+  // Viewers never write: no edit reaches the document, and nothing is queued for saving.
+  const readOnly = load.kind === "ready" && !can(load.site.role, "edit");
 
   /** Queues a save of `target`. Never rejects: failures land in the save state and leave `persisted` behind. */
   const persist = useCallback(
@@ -91,7 +94,7 @@ export function useSiteDocument(siteId: string) {
   );
 
   useEffect(() => {
-    if (!doc || doc === persisted.current) return;
+    if (!doc || readOnly || doc === persisted.current) return;
 
     const parsed = SiteDocument.safeParse(doc);
     if (!parsed.success) {
@@ -105,12 +108,12 @@ export function useSiteDocument(siteId: string) {
       void persist(doc, parsed.data);
     }, AUTOSAVE_MS);
     return () => clearTimeout(timer);
-  }, [doc, persist]);
+  }, [doc, persist, readOnly]);
 
   /** Saves pending edits now and resolves once they are stored. Throws if the document is invalid or the save fails. */
   const flush = useCallback(async (): Promise<void> => {
     const current = latestDoc.current;
-    if (!current) return;
+    if (!current || readOnly) return;
     if (current !== persisted.current && requested.current !== current) {
       const parsed = SiteDocument.safeParse(current);
       if (!parsed.success) throw new Error(`Fix this first: ${formatIssue(parsed.error)}`);
@@ -119,13 +122,13 @@ export function useSiteDocument(siteId: string) {
       await queue.current;
     }
     if (persisted.current !== current) throw new Error("Your latest changes could not be saved. Try again in a moment.");
-  }, [persist]);
+  }, [persist, readOnly]);
 
   const unsaved = save.kind === "unsaved" || save.kind === "saving";
   useBeforeUnloadGuard(unsaved);
 
   const update = useCallback((fn: (doc: SiteDocument) => SiteDocument) => {
-    setLoad((current) => (current.kind === "ready" ? { ...current, doc: fn(current.doc) } : current));
+    setLoad((current) => (current.kind === "ready" && can(current.site.role, "edit") ? { ...current, doc: fn(current.doc) } : current));
   }, []);
 
   const updateSite = useCallback((patch: Partial<SiteInfo>) => {

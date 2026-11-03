@@ -26,12 +26,12 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { z } from "zod";
-import { isSiteAssetKey, loadAuthorizedSite } from "../access";
+import { isSiteAssetKey, loadOrgAccess, requireSiteRole } from "../access";
 import { AiProviderError, createProvider, type AiCallUsage, type AiProvider } from "../ai";
 import { conformNewSection, conformOption, editTarget, pageSummary } from "../ai/edit";
 import type { TemplateChoice } from "../ai/provider";
-import { completedUsage, dailyLimit, globalDailyLimit, releaseUsage, reserveUsage, usedToday, utcDayWindow } from "../ai/usage";
-import { aiUsage, organizations, siteVersions, sites, type Site } from "../db/schema";
+import { completedUsage, dailyLimit, globalDailyLimit, orgDailyLimit, orgUsedToday, releaseUsage, reserveUsage, usedToday, utcDayWindow } from "../ai/usage";
+import { aiUsage, siteVersions, sites, type Site } from "../db/schema";
 import { newId } from "../ids";
 import { errorFields, logError, requestIdOf, scrub } from "../log";
 import { LANGUAGE_PATH_PATTERN } from "../published";
@@ -75,18 +75,14 @@ async function parseBody<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.o
  */
 async function guard(c: Ctx): Promise<Guard | Response> {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id") ?? "");
-  if (!site) return c.json({ error: "Site not found" }, 404);
-  const [org] = await db
-    .select({ name: organizations.name })
-    .from(organizations)
-    .where(eq(organizations.id, site.orgId))
-    .limit(1);
+  const access = await requireSiteRole(c, db, c.req.param("id") ?? "", "editor");
+  if (access instanceof Response) return access;
+  const { site, org } = access;
 
   const provider = createProvider(c.env);
   if (!provider) return c.json({ error: "AI is not configured on this server" }, 503);
 
-  return { site, provider, orgName: org?.name ?? "Your organization" };
+  return { site, provider, orgName: org.name };
 }
 
 const AUDIT_MAX_CHARS = 4000;
@@ -120,31 +116,31 @@ function finishUsage(
  */
 async function callProvider<T extends { usage: AiCallUsage }>(
   c: Ctx,
-  siteId: string,
+  site: Pick<Site, "id" | "orgId">,
   action: AiAction,
   call: () => Promise<T>,
 ): Promise<{ result: T; usageId: string } | Response> {
   const db = drizzle(c.env.DB);
   const reservation = await reserveUsage(db, {
     userId: c.var.user.id,
-    siteId,
+    siteId: site.id,
+    orgId: site.orgId,
     action,
     userLimit: dailyLimit(c.env),
+    orgLimit: orgDailyLimit(c.env),
     globalLimit: globalDailyLimit(c.env),
   });
   if (!reservation.ok) {
     const resetsAt = utcDayWindow().resetsAt.toISOString();
+    const quota = { scope: reservation.reason, used: reservation.used, limit: reservation.limit, resetsAt };
     if (reservation.reason === "global") {
       logError("ai_global_limit_reached", requestIdOf(c), { used: reservation.used, limit: reservation.limit });
-      return c.json(
-        { error: "The AI assistant has reached its daily capacity for everyone. It resets at midnight UTC.", used: reservation.used, limit: reservation.limit, resetsAt },
-        429,
-      );
+      return c.json({ error: "The AI assistant has reached its daily capacity for everyone. It resets at midnight UTC.", ...quota }, 429);
     }
-    return c.json(
-      { error: "Daily AI limit reached. It resets at midnight UTC.", used: reservation.used, limit: reservation.limit, resetsAt },
-      429,
-    );
+    if (reservation.reason === "organization") {
+      return c.json({ error: `Your organization's daily AI limit (${reservation.limit}) is used up. It resets at midnight UTC.`, ...quota }, 429);
+    }
+    return c.json({ error: "Daily AI limit reached. It resets at midnight UTC.", ...quota }, 429);
   }
 
   const startedAt = Date.now();
@@ -185,14 +181,21 @@ async function checkImageKey(c: Ctx, siteId: string, key: string | undefined): P
 
 export const aiRoutes = new Hono<AppEnv>();
 
+/** Today's use by the caller, plus their organization's when `?orgId=` names one they belong to. */
 aiRoutes.get("/ai/usage", async (c) => {
-  const used = await usedToday(drizzle(c.env.DB), c.var.user.id);
+  const db = drizzle(c.env.DB);
+  const used = await usedToday(db, c.var.user.id);
   const body: AiUsageResponse = {
     used,
     limit: dailyLimit(c.env),
     resetsAt: utcDayWindow().resetsAt.toISOString(),
     available: createProvider(c.env) !== null,
   };
+  const orgId = c.req.query("orgId");
+  if (orgId) {
+    const access = await loadOrgAccess(db, c.var.user, orgId);
+    if (access) body.organization = { used: await orgUsedToday(db, access.org.id), limit: orgDailyLimit(c.env) };
+  }
   return c.json(body);
 });
 
@@ -204,7 +207,7 @@ aiRoutes.post("/sites/:id/ai/draft", tooLarge, async (c) => {
   const referenceAssetKey = await checkImageKey(c, g.site.id, body.referenceAssetKey);
   if (referenceAssetKey instanceof Response) return referenceAssetKey;
 
-  const called = await callProvider(c, g.site.id, "draft", () =>
+  const called = await callProvider(c, g.site, "draft", () =>
     g.provider.draft({
       notes: body.notes,
       language: body.language,
@@ -265,7 +268,7 @@ aiRoutes.post("/sites/:id/ai/rewrite", tooLarge, async (c) => {
   const body = await parseBody(c, AiRewriteRequest);
   if (body instanceof Response) return body;
 
-  const called = await callProvider(c, g.site.id, "rewrite", () => g.provider.rewrite(body));
+  const called = await callProvider(c, g.site, "rewrite", () => g.provider.rewrite(body));
   if (called instanceof Response) return called;
   const { result, usageId } = called;
 
@@ -282,7 +285,7 @@ aiRoutes.post("/sites/:id/ai/theme", tooLarge, async (c) => {
   const referenceAssetKey = await checkImageKey(c, g.site.id, body.referenceAssetKey);
   if (referenceAssetKey instanceof Response) return referenceAssetKey;
 
-  const called = await callProvider(c, g.site.id, "theme", () =>
+  const called = await callProvider(c, g.site, "theme", () =>
     g.provider.theme({ templates: templateChoices(), description: body.description, referenceAssetKey }),
   );
   if (called instanceof Response) return called;
@@ -310,7 +313,7 @@ aiRoutes.post("/sites/:id/ai/alt-text", tooLarge, async (c) => {
   if (assetKey instanceof Response) return assetKey;
   if (assetKey === undefined) return c.json({ error: "assetKey is required" }, 400);
 
-  const called = await callProvider(c, g.site.id, "alt_text", () => g.provider.altText({ assetKey, orgName: g.orgName }));
+  const called = await callProvider(c, g.site, "alt_text", () => g.provider.altText({ assetKey, orgName: g.orgName }));
   if (called instanceof Response) return called;
   const { result, usageId } = called;
 
@@ -346,7 +349,7 @@ aiRoutes.post("/sites/:id/ai/translate", tooLarge, async (c) => {
     return c.json({ error: "That is already the site's main language" }, 400);
   }
 
-  const called = await callProvider(c, g.site.id, "translate", () =>
+  const called = await callProvider(c, g.site, "translate", () =>
     g.provider.translate({ document, targetLanguage: language, sourceLanguage: document.meta.language }),
   );
   if (called instanceof Response) return called;
@@ -420,7 +423,7 @@ aiRoutes.post("/sites/:id/ai/edit", tooLarge, async (c) => {
   if (!target) return c.json({ error: "That section is not on the saved page. Save and try again." }, 400);
   const options = body.scope.kind === "page" ? 1 : body.options;
 
-  const called = await callProvider(c, g.site.id, "edit", () =>
+  const called = await callProvider(c, g.site, "edit", () =>
     g.provider.edit({
       instruction: body.instruction,
       scope: body.scope,
@@ -462,7 +465,7 @@ aiRoutes.post("/sites/:id/ai/add-section", tooLarge, async (c) => {
   const afterSection = body.afterSectionId ? document.sections.find((s) => s.id === body.afterSectionId) : undefined;
   if (body.afterSectionId && !afterSection) return c.json({ error: "That section is not on the saved page. Save and try again." }, 400);
 
-  const called = await callProvider(c, g.site.id, "add_section", () =>
+  const called = await callProvider(c, g.site, "add_section", () =>
     g.provider.addSection({
       instruction: body.instruction,
       pageSummary: pageSummary(document),
