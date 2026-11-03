@@ -71,7 +71,8 @@ export function ImageField(props: {
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
         className={cn(
-          "rounded-lg border border-dashed p-2 transition-colors",
+          // relative: the sr-only file input is absolutely positioned and must stay inside this box, not stretch the page.
+          "relative rounded-lg border border-dashed p-2 transition-colors",
           dragging ? "border-brand bg-brand-soft" : "border-input",
         )}
       >

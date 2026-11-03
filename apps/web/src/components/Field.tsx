@@ -17,10 +17,23 @@ export function TextField(props: {
   assist?: { context: string };
   /** Shows the value but does not let it change (and hides the AI button). */
   disabled?: boolean;
+  /** When the field is empty, shows "Write this with AI →" inside it; clicking opens Ask AI prefilled. */
+  ghost?: () => void;
 }) {
-  const { label, value, onChange, multiline, placeholder, hint, assist, disabled } = props;
+  const { label, value, onChange, multiline, placeholder, hint, assist, disabled, ghost } = props;
   const id = useId();
-  const { ai } = useAi();
+  const { ai, enabled } = useAi();
+  const showGhost = ghost !== undefined && enabled && !disabled && value.trim() === "";
+  const ghostButton = showGhost ? (
+    <button
+      type="button"
+      onClick={ghost}
+      aria-label={`Write ${label} with AI`}
+      className={`absolute left-2.5 ${multiline ? "top-2" : "top-1/2 -translate-y-1/2"} rounded px-0.5 text-xs text-brand hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none`}
+    >
+      Write this with AI →
+    </button>
+  ) : null;
   const labelEl = (
     <Label htmlFor={id} className="text-xs text-muted-foreground">
       {label}
@@ -36,18 +49,21 @@ export function TextField(props: {
       ) : (
         labelEl
       )}
-      {multiline ? (
-        <Textarea
-          id={id}
-          className="min-h-24 resize-y"
-          value={value}
-          placeholder={placeholder}
-          disabled={disabled}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      ) : (
-        <Input id={id} value={value} placeholder={placeholder} disabled={disabled} onChange={(e) => onChange(e.target.value)} />
-      )}
+      <div className="relative">
+        {multiline ? (
+          <Textarea
+            id={id}
+            className="min-h-24 resize-y"
+            value={value}
+            placeholder={showGhost ? undefined : placeholder}
+            disabled={disabled}
+            onChange={(e) => onChange(e.target.value)}
+          />
+        ) : (
+          <Input id={id} value={value} placeholder={showGhost ? undefined : placeholder} disabled={disabled} onChange={(e) => onChange(e.target.value)} />
+        )}
+        {ghostButton}
+      </div>
       {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   );

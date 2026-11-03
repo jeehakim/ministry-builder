@@ -1,9 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
+  AiAddSectionRequest,
+  AiAddSectionResponse,
   AiCampaignStoryRequest,
   AiCampaignStoryResponse,
   AiDraftRequest,
   AiDraftResponse,
+  AiEditRequest,
+  AiEditResponse,
   AiRewriteRequest,
   AiThankYouRequest,
   AiThemeRequest,
@@ -33,6 +37,7 @@ export const VIEW_ONLY_REASON = "AI is off because you can only view this site."
 export const DRAFT_BUSY_KEY = "draft";
 export const THEME_BUSY_KEY = "theme";
 export const TRANSLATE_BUSY_KEY = "translate";
+export const EDIT_BUSY_KEY = "edit";
 
 export interface AiContextValue {
   /** The AI client, or null in local mode. */
@@ -51,6 +56,9 @@ export interface AiContextValue {
   runAltText(key: string, imageSrc: string): Promise<string | null>;
   runTheme(request: AiThemeRequest): Promise<AiThemeResponse | null>;
   runTranslate(language: string): Promise<AiTranslateResponse | null>;
+  /** Scoped edit (Ask AI). The result is a change set for the user to review; nothing is applied here. */
+  runEdit(request: AiEditRequest): Promise<AiEditResponse | null>;
+  runAddSection(request: AiAddSectionRequest): Promise<AiAddSectionResponse | null>;
   runCampaignStory(campaignId: string, request: AiCampaignStoryRequest): Promise<AiCampaignStoryResponse | null>;
   runThankYou(campaignId: string, request: AiThankYouRequest): Promise<string | null>;
 }
@@ -74,6 +82,8 @@ const INERT: AiContextValue = {
   runAltText: unavailable,
   runTheme: unavailable,
   runTranslate: unavailable,
+  runEdit: unavailable,
+  runAddSection: unavailable,
   runCampaignStory: unavailable,
   runThankYou: unavailable,
 };
@@ -173,6 +183,8 @@ export function AiProvider({ orgId = null, readOnly = false, children }: { orgId
       },
       runTheme: (request) => run(THEME_BUSY_KEY, (client) => client.theme(siteId, request)),
       runTranslate: (language) => run(TRANSLATE_BUSY_KEY, (client) => client.translate(siteId, language)),
+      runEdit: (request) => run(EDIT_BUSY_KEY, (client) => client.edit(siteId, request)),
+      runAddSection: (request) => run(EDIT_BUSY_KEY, (client) => client.addSection(siteId, request)),
       runCampaignStory: (campaignId, request) => run(CAMPAIGN_STORY_BUSY_KEY, (client) => client.campaignStory(siteId, campaignId, request)),
       runThankYou: async (campaignId, request) => {
         const result = await run(THANK_YOU_BUSY_KEY, (client) => client.thankYou(siteId, campaignId, request));

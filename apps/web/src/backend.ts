@@ -1,11 +1,15 @@
 import {
   emptySiteDocument,
   SiteDocument,
+  type AiAddSectionRequest,
+  type AiAddSectionResponse,
   type AiAltTextResponse,
   type AiCampaignStoryRequest,
   type AiCampaignStoryResponse,
   type AiDraftRequest,
   type AiDraftResponse,
+  type AiEditRequest,
+  type AiEditResponse,
   type AiRewriteRequest,
   type AiRewriteResponse,
   type AiThemeRequest,
@@ -65,6 +69,10 @@ export interface AiBackend {
   altText(siteId: string, assetKey: string): Promise<AiAltTextResponse>;
   /** Translates the whole page into `language`. The server also saves the overlay as a new version. */
   translate(siteId: string, language: string): Promise<AiTranslateResponse>;
+  /** Proposes changes to one scope of the saved page. Nothing is stored until the editor applies them. */
+  edit(siteId: string, request: AiEditRequest): Promise<AiEditResponse>;
+  /** Writes one new section for the saved page; the editor inserts it. */
+  addSection(siteId: string, request: AiAddSectionRequest): Promise<AiAddSectionResponse>;
   /** Drafts a campaign title, summary and story from a brief. */
   campaignStory(siteId: string, campaignId: string, request: AiCampaignStoryRequest): Promise<AiCampaignStoryResponse>;
   /** Writes the thank-you note donors of a campaign receive. */
@@ -200,6 +208,8 @@ export function createApiBackend(getToken: GetToken): Backend {
       theme: (siteId, request) => api.aiTheme(siteId, request),
       altText: (siteId, assetKey) => api.aiAltText(siteId, assetKey),
       translate: (siteId, language) => api.aiTranslate(siteId, language),
+      edit: (siteId, request) => api.aiEdit(siteId, request),
+      addSection: (siteId, request) => api.aiAddSection(siteId, request),
       campaignStory: (siteId, campaignId, request) => api.aiCampaignStory(siteId, campaignId, request),
       thankYou: (siteId, campaignId, request) => api.aiThankYou(siteId, campaignId, request),
     },

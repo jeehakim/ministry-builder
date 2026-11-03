@@ -6,6 +6,7 @@ import { ImageField } from "../components/ImageField";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { useAskAi } from "./AskAiContext";
 import { editMetaText, mergeTheme } from "./documentOps";
 import { FONT_PAIRS, findFontPair } from "./fontPairs";
 import { LanguagesPanel } from "./LanguagesPanel";
@@ -40,6 +41,8 @@ export function SiteForm(props: {
 }) {
   const { doc, update, lang, translatingTo, onTranslate, onOpenLanguage } = props;
   const translating = lang !== doc.meta.language;
+  const askAi = useAskAi();
+  const ghost = (what: string) => (askAi.available && !translating ? () => askAi.prefill({ scope: { kind: "meta" }, instruction: `Write the ${what}` }) : undefined);
   const view = useMemo(() => localizeDocument(doc, lang), [doc, lang]);
   const { theme } = doc;
   const meta = view.meta;
@@ -72,6 +75,7 @@ export function SiteForm(props: {
           label="Tagline"
           value={meta.tagline}
           assist={{ context: "organization tagline" }}
+          ghost={ghost("tagline")}
           onChange={(tagline) => update((d) => editMetaText(d, lang, { tagline }))}
         />
         <TextField
@@ -79,6 +83,7 @@ export function SiteForm(props: {
           multiline
           value={meta.description}
           assist={{ context: "search engine description" }}
+          ghost={ghost("description for search engines")}
           onChange={(description) => update((d) => editMetaText(d, lang, { description }))}
         />
         <ImageField label="Logo" value={meta.logo} locked={translating} lockAlt={translating} onChange={(logo) => setMeta({ logo })} />

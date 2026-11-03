@@ -4,6 +4,7 @@ import { renderSite } from "@ministry/templates";
 import { AlertTriangle, Lock } from "lucide-react";
 import { useBackend } from "../backend-context";
 import { langFromHash, type LanguageLink } from "../lib/languages";
+import { withProposedOutline } from "../lib/previewOutline";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
 import { useLatest } from "../lib/useLatest";
 import { formatIssue } from "./documentOps";
@@ -23,11 +24,14 @@ export function Preview({
   focusSectionId,
   languageLinks,
   onSelectLanguage,
+  outlineSectionIds,
 }: {
   doc: SiteDocument;
   device: Device;
   hostname: string;
   focusSectionId: string | null;
+  /** Sections the AI proposes to change: outlined and tagged "Proposed" in the preview only. */
+  outlineSectionIds?: string[];
   /** Entries for the page's language switcher; hrefs are `#lang-<code>` hashes. */
   languageLinks?: LanguageLink[];
   /** Called when the visitor clicks a language in the preview. */
@@ -35,7 +39,7 @@ export function Preview({
 }) {
   const backend = useBackend();
   // Debounced together, so the switcher's "current" language never disagrees with the text shown.
-  const input = useMemo(() => ({ doc, languageLinks }), [doc, languageLinks]);
+  const input = useMemo(() => ({ doc, languageLinks, outlineSectionIds: outlineSectionIds ?? [] }), [doc, languageLinks, outlineSectionIds]);
   const debounced = useDebouncedValue(input, PREVIEW_DEBOUNCE_MS);
   const selectLanguage = useLatest(onSelectLanguage);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -44,7 +48,8 @@ export function Preview({
 
   const rendered = useMemo<Rendered>(() => {
     try {
-      return { ok: true, html: renderSite(debounced.doc, { imageUrl: (ref) => backend.imageUrl(ref), editor: true, formAction: "#", languageLinks: debounced.languageLinks }).html };
+      const { html } = renderSite(debounced.doc, { imageUrl: (ref) => backend.imageUrl(ref), editor: true, formAction: "#", languageLinks: debounced.languageLinks });
+      return { ok: true, html: withProposedOutline(html, debounced.outlineSectionIds) };
     } catch (err) {
       const message =
         err instanceof Error && "issues" in err && Array.isArray(err.issues)

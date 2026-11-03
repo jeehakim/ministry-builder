@@ -17,6 +17,8 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DRAFT_BUSY_KEY, useAi } from "./AiContext";
+import type { Suggestion } from "./askAi";
+import { SuggestionsMenu } from "./SuggestionsMenu";
 import type { SaveState } from "./useSiteDocument";
 
 export function EditorHeader(props: {
@@ -31,8 +33,11 @@ export function EditorHeader(props: {
   onExport: () => void;
   onPublish: () => void;
   onMessages: () => void;
+  /** Improvements computed from the document; shown when AI is available. */
+  suggestions?: Suggestion[];
+  onSuggestion?: (suggestion: Suggestion) => void;
 }) {
-  const { orgName, save, site, exporting, hasVariations, onDraft, onVariations, onExport, onPublish, onMessages } = props;
+  const { orgName, save, site, exporting, hasVariations, onDraft, onVariations, onExport, onPublish, onMessages, suggestions, onSuggestion } = props;
   const backend = useBackend();
   const { enabled, disabledReason, busy } = useAi();
   const drafting = busy[DRAFT_BUSY_KEY] === true;
@@ -86,6 +91,7 @@ export function EditorHeader(props: {
               {gated ? disabledReason : drafting ? "Your draft is being written" : "Write a full page from your notes"}
             </TooltipContent>
           </Tooltip>
+          {enabled && suggestions && onSuggestion ? <SuggestionsMenu suggestions={suggestions} onPick={onSuggestion} /> : null}
           <AiUsagePill />
         </>
       ) : null}

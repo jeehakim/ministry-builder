@@ -1,8 +1,10 @@
 import {
+  AiAddSectionResponse,
   AcceptInvitationResponse,
   AiAltTextResponse,
   AiCampaignStoryResponse,
   AiDraftResponse,
+  AiEditResponse,
   AiRewriteResponse,
   AiThemeResponse,
   AiThankYouResponse,
@@ -22,8 +24,10 @@ import {
   OrgRole,
   OrgsResponse,
   SiteDocument,
+  type AiAddSectionRequest,
   type AiCampaignStoryRequest,
   type AiDraftRequest,
+  type AiEditRequest,
   type AiThankYouRequest,
   type CampaignInput,
   type CampaignTotals,
@@ -211,6 +215,8 @@ export interface ApiClient {
   aiTheme(siteId: string, body: AiThemeRequest): Promise<AiThemeResponse>;
   aiAltText(siteId: string, assetKey: string): Promise<AiAltTextResponse>;
   aiTranslate(siteId: string, language: string): Promise<AiTranslateResponse>;
+  aiEdit(siteId: string, body: AiEditRequest): Promise<AiEditResponse>;
+  aiAddSection(siteId: string, body: AiAddSectionRequest): Promise<AiAddSectionResponse>;
   aiCampaignStory(siteId: string, campaignId: string, body: AiCampaignStoryRequest): Promise<AiCampaignStoryResponse>;
   aiThankYou(siteId: string, campaignId: string, body: AiThankYouRequest): Promise<AiThankYouResponse>;
   listOrgCampaigns(orgId: string): Promise<OrgCampaignList>;
@@ -480,6 +486,14 @@ export function createApiClient(getToken: GetToken, baseUrl: string = API_URL): 
     aiTranslate(siteId, language) {
       const body: AiTranslateRequest = { language };
       return aiRequest(`${sitePath(siteId)}/ai/translate`, AiTranslateResponse, json("POST", body), AI_TRANSLATE_TIMEOUT_MS);
+    },
+    aiEdit(siteId, body) {
+      // A page-wide edit can return several sections, so it gets the longer budget.
+      const timeout = body.scope.kind === "page" ? AI_TRANSLATE_TIMEOUT_MS : AI_TIMEOUT_MS;
+      return aiRequest(`${sitePath(siteId)}/ai/edit`, AiEditResponse, json("POST", body), timeout);
+    },
+    aiAddSection(siteId, body) {
+      return aiRequest(`${sitePath(siteId)}/ai/add-section`, AiAddSectionResponse, json("POST", body), AI_TIMEOUT_MS);
     },
     aiCampaignStory(siteId, campaignId, body) {
       return aiRequest(`${campaignPath(siteId, campaignId)}/ai/story`, AiCampaignStoryResponse, json("POST", body), AI_TIMEOUT_MS);

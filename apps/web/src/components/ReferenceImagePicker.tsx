@@ -28,7 +28,7 @@ export function ReferenceImagePicker(props: {
   return (
     <div className="space-y-1.5">
       <Label className="text-xs text-muted-foreground">{label}</Label>
-      <div className="flex items-center gap-3 rounded-lg border border-dashed border-input p-2">
+      <div className="relative flex items-center gap-3 rounded-lg border border-dashed border-input p-2">
         {src ? (
           <div className="size-14 shrink-0 overflow-hidden rounded-md bg-muted ring-1 ring-foreground/10">
             <img src={backend.imageUrl({ src, alt: "" })} alt="Selected design reference" className="size-full object-cover" />
