@@ -8,5 +8,6 @@ dist/
 *.log
 .DS_Store
 
-# Market research stays local: not for the public repository.
+# Business plan and market research stay local: not for the public repository.
 docs/COMPETITORS.md
+docs/PROPOSAL.md

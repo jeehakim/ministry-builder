@@ -1,6 +1,6 @@
 # Ministry Builder — platform design: AI-native editing, organizations, fundraising
 
-**Date:** 2026-11-02 · **Status:** proposal for the next three build rounds · **Companion:** `PROPOSAL.md`, `SECURITY-REVIEW-2026-11-02.md`
+**Date:** 2026-11-02 · **Status:** proposal for the next three build rounds · **Companion:** `SECURITY-REVIEW-2026-11-02.md` (and the business plan `PROPOSAL.md`, kept out of the public repository)
 
 ---
 

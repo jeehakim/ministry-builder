@@ -138,7 +138,7 @@ pnpm typecheck && pnpm test && pnpm build
 - More templates and section types; ZIP export of every language
 - Enrichment sources for the copilot (non-profit registries, licensed stock photos)
 
-Plan: [docs/PROPOSAL.md](docs/PROPOSAL.md). The market and pricing research it cites is not part of the repository.
+Product design: [docs/PLATFORM-DESIGN.md](docs/PLATFORM-DESIGN.md). The business plan and market research are not part of the repository.
 
 ## Contributing
 
