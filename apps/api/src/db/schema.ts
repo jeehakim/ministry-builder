@@ -1,6 +1,6 @@
-import { AI_ACTIONS } from "@ministry/schema";
+import { AI_ACTIONS, ORG_EVENT_ACTIONS, ORG_ROLES } from "@ministry/schema";
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const createdAt = () =>
   integer("created_at", { mode: "timestamp_ms" })
@@ -110,6 +110,8 @@ export const aiUsage = sqliteTable(
       .notNull()
       .references(() => users.id),
     siteId: text("site_id").references(() => sites.id),
+    /** The organization whose quota the call counted against. Null only on rows older than the org quota. */
+    orgId: text("org_id").references(() => organizations.id),
     action: text("action", { enum: AI_ACTIONS }).notNull(),
     provider: text("provider").notNull(),
     model: text("model").notNull(),
@@ -125,7 +127,7 @@ export const aiUsage = sqliteTable(
     resultJson: text("result_json"),
     createdAt: createdAt(),
   },
-  (t) => [index("ai_usage_user_id_created_at_idx").on(t.userId, t.createdAt)],
+  (t) => [index("ai_usage_user_id_created_at_idx").on(t.userId, t.createdAt), index("ai_usage_org_id_created_at_idx").on(t.orgId, t.createdAt)],
 );
 
 /**
@@ -292,7 +294,75 @@ export const integrationEvents = sqliteTable(
   (t) => [index("integration_events_org_id_kind_created_at_idx").on(t.orgId, t.kind, t.createdAt)],
 );
 
+/**
+ * Who belongs to an organization and with which role. `organizations.owner_user_id` stays the primary
+ * owner for listings and limits; this table is the source of truth for access (see access.ts).
+ */
+export const orgMembers = sqliteTable(
+  "org_members",
+  {
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    role: text("role", { enum: ORG_ROLES }).notNull(),
+    /** Who invited them; null for the founding owner and for staff transfers. Not a foreign key: the inviter's account may be deleted later. */
+    invitedBy: text("invited_by"),
+    joinedAt: integer("joined_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.userId] }), index("org_members_user_id_idx").on(t.userId)],
+);
+
+/**
+ * An emailed invitation to join an organization. Only the SHA-256 of the token is stored; the token itself
+ * exists in the email alone. Accepted rows keep `accepted_at`; expired and revoked ones are deleted.
+ */
+export const orgInvitations = sqliteTable(
+  "org_invitations",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    /** Lowercase. The accepting Clerk user must sign in with this address. */
+    email: text("email").notNull(),
+    role: text("role", { enum: ORG_ROLES }).notNull(),
+    tokenHash: text("token_hash").notNull(),
+    invitedBy: text("invited_by"),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    acceptedAt: integer("accepted_at", { mode: "timestamp_ms" }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("org_invitations_token_hash_unique").on(t.tokenHash), index("org_invitations_org_id_created_at_idx").on(t.orgId, t.createdAt)],
+);
+
+/** Audit log: who did what in an organization. `actor_user_id` is null when the system acted (webhooks). */
+export const orgEvents = sqliteTable(
+  "org_events",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    actorUserId: text("actor_user_id"),
+    action: text("action", { enum: ORG_EVENT_ACTIONS }).notNull(),
+    /** What was acted on: a user id, site id, hostname, provider name. */
+    target: text("target"),
+    /** Small JSON object with the specifics (old and new role, email…). Never secrets. */
+    detailJson: text("detail_json"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("org_events_org_id_created_at_idx").on(t.orgId, t.createdAt)],
+);
+
 export type User = typeof users.$inferSelect;
+export type OrgMember = typeof orgMembers.$inferSelect;
+export type OrgInvitation = typeof orgInvitations.$inferSelect;
+export type OrgEventRow = typeof orgEvents.$inferSelect;
 export type Site = typeof sites.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
 export type Domain = typeof domains.$inferSelect;

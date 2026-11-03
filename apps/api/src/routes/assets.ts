@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { loadAuthorizedSite } from "../access";
+import { requireSiteRole } from "../access";
 import { assets } from "../db/schema";
 import { newId } from "../ids";
 import { limitsFor } from "../limits";
@@ -54,8 +54,9 @@ assetRoutes.post(
   bodyLimit({ maxSize: MAX_BODY_BYTES, onError: (c) => c.json({ error: "File too large (max 5 MB)" }, 413) }),
   async (c) => {
     const db = drizzle(c.env.DB);
-    const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-    if (!site) return c.json({ error: "Site not found" }, 404);
+    const access = await requireSiteRole(c, db, c.req.param("id"), "editor");
+    if (access instanceof Response) return access;
+    const { site } = access;
 
     const form = await c.req.parseBody().catch(() => null);
     if (!form) return c.json({ error: "Body must be multipart/form-data" }, 400);
@@ -107,8 +108,9 @@ assetRoutes.post(
 
 assetRoutes.delete("/sites/:id/assets/:assetId", async (c) => {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id"), "editor");
+  if (access instanceof Response) return access;
+  const { site } = access;
 
   const [asset] = await db
     .select()

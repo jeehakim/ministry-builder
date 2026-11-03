@@ -25,6 +25,8 @@
     "ANTHROPIC_MODEL": "claude-opus-5-5",
     // AI calls allowed per user per UTC day.
     "AI_DAILY_LIMIT": "30",
+    // AI calls allowed per organization per UTC day, all members together.
+    "AI_DAILY_LIMIT_ORG": "100",
     // AI calls allowed across every user per UTC day (a backstop; set a hard spend limit at the provider too, see README).
     "AI_GLOBAL_DAILY_LIMIT": "2000",
     // Per-user and per-site limits (see README). Sites per non-admin user across their organizations.

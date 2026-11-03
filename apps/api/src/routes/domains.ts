@@ -4,7 +4,7 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { loadAuthorizedSite } from "../access";
+import { requireSiteRole } from "../access";
 import {
   CloudflareError,
   createCustomHostname,
@@ -15,6 +15,7 @@ import {
 } from "../cloudflare";
 import { domains, organizations, sites, type Domain } from "../db/schema";
 import { DnsLookupError, lookupTxt } from "../dns";
+import { orgEventInsert, recordOrgEvent } from "../events";
 import { newId } from "../ids";
 import { limitsFor } from "../limits";
 import { logError, requestIdOf } from "../log";
@@ -149,8 +150,9 @@ export const domainRoutes = new Hono<AppEnv>();
 
 domainRoutes.get("/sites/:id/domains", async (c) => {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id"), "viewer");
+  if (access instanceof Response) return access;
+  const { site } = access;
   await expireUnverifiedDomains(db, c.env);
   const rows = await db.select().from(domains).where(eq(domains.siteId, site.id)).orderBy(asc(domains.createdAt));
   const target = cnameTargetFor(c.env);
@@ -166,8 +168,9 @@ domainRoutes.post(
   bodyLimit({ maxSize: 4 * 1024, onError: (c) => c.json({ error: "Body too large" }, 413) }),
   async (c) => {
     const db = drizzle(c.env.DB);
-    const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-    if (!site) return c.json({ error: "Site not found" }, 404);
+    const access = await requireSiteRole(c, db, c.req.param("id"), "admin");
+    if (access instanceof Response) return access;
+    const { site } = access;
     if (!isCloudflareConfigured(c.env)) return c.json({ error: "Custom domains are not enabled on this server" }, 503);
 
     const parsed = CreateBody.safeParse(await c.req.json().catch(() => null));
@@ -221,6 +224,7 @@ domainRoutes.post(
       if (!isUniqueViolation(err)) throw err;
       return c.json({ error: "This domain is already attached to a site" }, 409);
     }
+    await recordOrgEvent(db, { orgId: site.orgId, actorUserId: c.var.user.id, action: "domain.added", target: hostname, detail: { siteId: site.id, kind } });
     return c.json({ domain: domainView(row, cnameTargetFor(c.env)) }, 201);
   },
 );
@@ -231,8 +235,9 @@ domainRoutes.post(
  */
 domainRoutes.post("/sites/:id/domains/:domainId/refresh", async (c) => {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id"), "admin");
+  if (access instanceof Response) return access;
+  const { site } = access;
   const [domain] = await db
     .select()
     .from(domains)
@@ -277,8 +282,9 @@ domainRoutes.post("/sites/:id/domains/:domainId/refresh", async (c) => {
 
 domainRoutes.delete("/sites/:id/domains/:domainId", async (c) => {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id"), "admin");
+  if (access instanceof Response) return access;
+  const { site } = access;
   const [domain] = await db
     .select()
     .from(domains)
@@ -296,6 +302,9 @@ domainRoutes.delete("/sites/:id/domains/:domainId", async (c) => {
       throw err;
     }
   }
-  await db.delete(domains).where(eq(domains.id, domain.id));
+  await db.batch([
+    db.delete(domains).where(eq(domains.id, domain.id)),
+    orgEventInsert(db, { orgId: site.orgId, actorUserId: c.var.user.id, action: "domain.removed", target: domain.hostname, detail: { siteId: site.id, kind: domain.kind } }),
+  ]);
   return c.json({ ok: true });
 });

@@ -37,40 +37,74 @@ Set `vars.ALLOWED_ORIGIN` to `https://build.shofar.io` for production and uncomm
 | Method and path | Auth | Notes |
 |---|---|---|
 | `GET /health` | no | `{ ok: true }` |
-| `GET /sites` | yes | Sites in orgs the caller owns |
-| `POST /sites` | yes | `{ orgName, slug? }`; creates org if needed, site, first version. 409 if the slug is taken, 429 at the per-user site limit (admins exempt) |
-| `GET /sites/:id` | owner or admin | `{ site, document }`; `site.messageCount` is the number of stored contact-form messages |
-| `PUT /sites/:id/document` | owner or admin | Body is a `SiteDocument`; returns `{ versionId }`. Prunes the oldest versions beyond `MAX_VERSIONS_PER_SITE` |
-| `GET /sites/:id/versions` | owner or admin | `{ versions: [{ id, createdAt }], currentVersionId }` |
-| `POST /sites/:id/assets` | owner or admin | multipart `file` (JPEG, PNG, WebP, max 5 MB), optional `alt`, `width`, `height`; returns `{ id, key, url }`. 413 when the site would exceed `MAX_SITE_STORAGE_BYTES` |
-| `DELETE /sites/:id/assets/:assetId` | owner or admin | Removes the R2 object and the row |
+| `GET /sites?orgId=` | yes | Sites in every organization the caller belongs to (each with `orgId` and the caller's `role`), or one organization's with `orgId` |
+| `POST /sites` | yes | `{ orgName, slug? }` creates a new organization (caller becomes owner), the site and its first version; `{ orgId, orgName?, slug? }` adds a site to an existing organization (admin or owner there; `orgName` defaults to the organization's name). 409 if the slug is taken, 429 at the per-user site limit (platform admins exempt) |
+| `GET /sites/:id` | viewer | `{ site, document }`; `site.role` is the caller's role, `site.messageCount` the number of stored contact-form messages |
+| `PUT /sites/:id/document` | editor | Body is a `SiteDocument`; returns `{ versionId }`. Prunes the oldest versions beyond `MAX_VERSIONS_PER_SITE` |
+| `GET /sites/:id/versions` | viewer | `{ versions: [{ id, createdAt }], currentVersionId }` |
+| `POST /sites/:id/assets` | editor | multipart `file` (JPEG, PNG, WebP, max 5 MB), optional `alt`, `width`, `height`; returns `{ id, key, url }`. 413 when the site would exceed `MAX_SITE_STORAGE_BYTES` |
+| `DELETE /sites/:id/assets/:assetId` | editor | Removes the R2 object and the row |
 | `GET /assets/*` | no | Streams from R2, cached for a year |
-| `GET /ai/usage` | yes | `{ used, limit, resetsAt, available }`; the limit is per user per UTC day (`AI_DAILY_LIMIT`) |
-| `POST /sites/:id/ai/draft` | owner or admin | `AiDraftRequest`; stores 1 or 3 variations as versions sharing a `variationGroupId` (does not move the current version) |
-| `POST /sites/:id/ai/rewrite` | owner or admin | `AiRewriteRequest` -> `{ text }` |
-| `POST /sites/:id/ai/theme` | owner or admin | `AiThemeRequest` -> `{ theme, rationale }` |
-| `POST /sites/:id/ai/alt-text` | owner or admin | `{ assetKey }` (must be under `sites/<id>/`) -> `{ alt }` |
-| `POST /sites/:id/ai/translate` | owner or admin | `AiTranslateRequest` -> `{ language, overlay }`; 400 for the primary language; saves the overlay into `translations[language]`, adds the language to `meta.languages` and moves the current version |
-| `POST /sites/:id/publish` | owner or admin | Renders the current version into the `PUBLISHED` bucket (pages, thank-you pages, `robots.txt`, `sitemap.xml`); returns `{ url, publishedAt }`. 429 with `Retry-After` past `MAX_PUBLISHES_PER_HOUR` |
-| `POST /sites/:id/unpublish` | owner or admin | Removes the published objects; site returns to `draft` |
-| `GET /sites/:id/domains` | owner or admin | `{ domains, cnameTarget, enabled }`; each domain has `hostname`, `kind`, `sslStatus`, `ownershipVerifiedAt`, `verifiedAt`, `active`, `expiresAt` and the `txt` and `dns` records to create. Also deletes unproved domains older than 7 days (any site) |
-| `POST /sites/:id/domains` | owner or admin | `{ hostname, kind?: "primary" \| "redirect" }`; records the domain with a fresh ownership token and returns `{ domain }` (201). Nothing is created at Cloudflare yet. 400 bad hostname, 409 taken or second primary, 429 over `MAX_DOMAINS_PER_SITE` or `MAX_DOMAINS_PER_USER` (admins exempt from the latter), 503 not configured |
-| `POST /sites/:id/domains/:domainId/refresh` | owner or admin | Looks up `_ministry-verify.<hostname>` TXT over DNS-over-HTTPS until it carries the token, then creates the Cloudflare custom hostname, then re-reads its verification and certificate status; returns `{ domain, txtFound }`. 502 resolver or Cloudflare error |
-| `DELETE /sites/:id/domains/:domainId` | owner or admin | Removes the custom hostname at Cloudflare (if one was created), then the row |
-| `GET /sites/:id/contact-email?email=` | owner or admin | `{ email, verified, verifiedAt, sentAt, enabled }`: whether the contact form may email this address; `enabled` is false in store-only mode |
-| `POST /sites/:id/contact-email/verify` | owner or admin | `{ email }`; emails a verification link through the configured sender and returns the same status. 429 past 5 sends per address per day, 502 send failed, 503 store-only mode |
+| `GET /ai/usage?orgId=` | yes | `{ used, limit, resetsAt, available, organization? }`; the limit is per user per UTC day (`AI_DAILY_LIMIT`); with `orgId` (an organization the caller belongs to) `organization` carries that organization's `{ used, limit }` (`AI_DAILY_LIMIT_ORG`) |
+| `POST /sites/:id/ai/draft` | editor | `AiDraftRequest`; stores 1 or 3 variations as versions sharing a `variationGroupId` (does not move the current version) |
+| `POST /sites/:id/ai/rewrite` | editor | `AiRewriteRequest` -> `{ text }` |
+| `POST /sites/:id/ai/theme` | editor | `AiThemeRequest` -> `{ theme, rationale }` |
+| `POST /sites/:id/ai/alt-text` | editor | `{ assetKey }` (must be under `sites/<id>/`) -> `{ alt }` |
+| `POST /sites/:id/ai/translate` | editor | `AiTranslateRequest` -> `{ language, overlay }`; 400 for the primary language; saves the overlay into `translations[language]`, adds the language to `meta.languages` and moves the current version |
+| `POST /sites/:id/publish` | editor | Renders the current version into the `PUBLISHED` bucket (pages, thank-you pages, `robots.txt`, `sitemap.xml`); returns `{ url, publishedAt }`. 429 with `Retry-After` past `MAX_PUBLISHES_PER_HOUR` |
+| `POST /sites/:id/unpublish` | editor | Removes the published objects; site returns to `draft` |
+| `GET /sites/:id/domains` | viewer | `{ domains, cnameTarget, enabled }`; each domain has `hostname`, `kind`, `sslStatus`, `ownershipVerifiedAt`, `verifiedAt`, `active`, `expiresAt` and the `txt` and `dns` records to create. Also deletes unproved domains older than 7 days (any site) |
+| `POST /sites/:id/domains` | admin | `{ hostname, kind?: "primary" \| "redirect" }`; records the domain with a fresh ownership token and returns `{ domain }` (201). Nothing is created at Cloudflare yet. 400 bad hostname, 409 taken or second primary, 429 over `MAX_DOMAINS_PER_SITE` or `MAX_DOMAINS_PER_USER` (admins exempt from the latter), 503 not configured |
+| `POST /sites/:id/domains/:domainId/refresh` | admin | Looks up `_ministry-verify.<hostname>` TXT over DNS-over-HTTPS until it carries the token, then creates the Cloudflare custom hostname, then re-reads its verification and certificate status; returns `{ domain, txtFound }`. 502 resolver or Cloudflare error |
+| `DELETE /sites/:id/domains/:domainId` | admin | Removes the custom hostname at Cloudflare (if one was created), then the row |
+| `GET /sites/:id/contact-email?email=` | viewer | `{ email, verified, verifiedAt, sentAt, enabled }`: whether the contact form may email this address; `enabled` is false in store-only mode |
+| `POST /sites/:id/contact-email/verify` | editor | `{ email }`; emails a verification link through the configured sender and returns the same status. 429 past 5 sends per address per day, 502 send failed, 503 store-only mode |
 | `GET /verify-contact/:token` | no | The link in the verification email: marks the address verified for its site and answers a small HTML page (404 unknown, 410 expired after 7 days) |
-| `GET /sites/:id/messages?limit=50` | owner or admin | `{ messages: [{ id, name, email, message, language, createdAt, deliveredAt, deliveryError }] }`, newest first (limit 1-200) |
-| `DELETE /sites/:id/messages/:msgId` | owner or admin | Removes one stored message |
-| `GET /orgs/:id/integrations` | org owner or admin | `IntegrationsResponse`: `{ encryptionAvailable, activeSender: "organization" \| "platform" \| "none", resend: { keyHint, fromAddress, verifiedDomains, testedAt, lastError, updatedAt } \| null }`. Never contains the key or its ciphertext |
-| `PUT /orgs/:id/integrations/resend/key` | org owner or admin | `{ apiKey }`; checks the key against Resend (`GET /domains`), stores it encrypted and the verified domains. 400 malformed key or "Resend rejected this key", 429 past 10 attempts per hour, 502 Resend unreachable, 503 integrations disabled |
-| `PUT /orgs/:id/integrations/resend/from` | org owner or admin | `{ fromAddress, fromName? }`; the address's domain must be verified in the organization's Resend account (the list is refreshed first). 400 otherwise, 409 without a key |
-| `POST /orgs/:id/integrations/resend/test` | org owner or admin | `{ to }`; sends a short test email through the organization's key and address. Sets `testedAt`, or `lastError` and answers 502. 429 past 5 per hour, 409 without key or address |
-| `DELETE /orgs/:id/integrations/resend` | org owner or admin | Removes the stored key and settings; contact email goes back to the platform sender |
-| `GET /admin/sites` | admin | Every site with org name, owner, status and published URL |
-| `POST /orgs/:id/transfer` | admin | `{ email }`; looks the user up in Clerk and makes them the org owner |
+| `GET /sites/:id/messages?limit=50` | viewer | `{ messages: [{ id, name, email, message, language, createdAt, deliveredAt, deliveryError }] }`, newest first (limit 1-200) |
+| `DELETE /sites/:id/messages/:msgId` | editor | Removes one stored message |
+| `GET /orgs/:id/integrations` | viewer | `IntegrationsResponse`: `{ encryptionAvailable, activeSender: "organization" \| "platform" \| "none", resend: { keyHint, fromAddress, verifiedDomains, testedAt, lastError, updatedAt } \| null }`. Never contains the key or its ciphertext |
+| `PUT /orgs/:id/integrations/resend/key` | admin | `{ apiKey }`; checks the key against Resend (`GET /domains`), stores it encrypted and the verified domains. 400 malformed key or "Resend rejected this key", 429 past 10 attempts per hour, 502 Resend unreachable, 503 integrations disabled |
+| `PUT /orgs/:id/integrations/resend/from` | admin | `{ fromAddress, fromName? }`; the address's domain must be verified in the organization's Resend account (the list is refreshed first). 400 otherwise, 409 without a key |
+| `POST /orgs/:id/integrations/resend/test` | admin | `{ to }`; sends a short test email through the organization's key and address. Sets `testedAt`, or `lastError` and answers 502. 429 past 5 per hour, 409 without key or address |
+| `DELETE /orgs/:id/integrations/resend` | admin | Removes the stored key and settings; contact email goes back to the platform sender |
+| `GET /orgs` | yes | `{ orgs: [{ id, name, role, createdAt }] }`: the caller's organizations |
+| `GET /orgs/:id/members` | viewer | `{ members: [{ userId, email, role, invitedBy, joinedAt }], invitations }`; pending invitations are listed for admins and owners only |
+| `PATCH /orgs/:id/members/:userId` | admin | `{ role }` -> `{ member }`. Granting or removing the owner role needs an owner; 409 when it would leave no owner |
+| `DELETE /orgs/:id/members/:userId` | admin, or the member themself | Removes the membership. Removing an owner needs an owner; 409 for the last owner |
+| `POST /orgs/:id/invitations` | admin | `{ email, role: "viewer" \| "editor" \| "admin" }` -> `{ invitation, delivery, link? }` (201). Emails a link through the platform sender (`delivery: "email"`), or returns the link when no sender is configured (`"link"`). 409 already a member, 429 past 20 per organization per rolling day, 502 when the email cannot be sent |
+| `DELETE /orgs/:id/invitations/:invitationId` | admin | Revokes a pending invitation |
+| `GET /invitations/:token` | no | `{ orgName, role, inviterEmail, email (masked), expiresAt }`; 404 when unknown, expired or used |
+| `POST /invitations/:token/accept` | yes | Joins the organization; the signed-in email must match the invited address (403). Never lowers a role the member already holds -> `{ orgId, orgName, role }` |
+| `POST /orgs/:id/transfer-ownership` | owner | `{ userId }` (a member); they become owner, the caller steps down to admin -> `{ orgId, ownerUserId }` |
+| `GET /orgs/:id/events?limit=100` | viewer | `{ events: [{ id, action, actorUserId, actorEmail, target, detail, createdAt }] }`, newest first (limit 1-500) |
+| `POST /webhooks/clerk` | Svix signature | Clerk webhook endpoint; handles `user.deleted` (see "Organizations and roles"). 401 bad signature, 503 without `CLERK_WEBHOOK_SECRET` |
+| `GET /admin/sites` | platform admin | Every site with org name, owner, status and published URL |
+| `POST /orgs/:id/transfer` | platform admin | `{ email }`; staff hand-over: looks the user up in Clerk, makes them an owner member and removes every previous owner from the organization |
 
-AI routes answer 429 `{ error, used, limit, resetsAt }` over quota, 503 when no provider is configured, 502 on provider failure.
+The Auth column names the lowest organization role that may call the route (see "Organizations and roles"); a non-member gets 404, a member with a lower role 403 `{ error, role }`. Platform admins (and the staff token) act as owners everywhere.
+
+AI routes answer 429 `{ error, scope: "user" \| "organization" \| "global", used, limit, resetsAt }` over quota, 503 when no provider is configured, 502 on provider failure.
+
+### Organizations and roles
+
+Membership is ours, identity is Clerk's. `org_members (org_id, user_id, role, invited_by, joined_at)` is the source of truth for access; `organizations.owner_user_id` stays in step as the primary owner (listings, the sites-per-user limit). Migration `0008` creates the tables and backfills an owner membership for every existing organization owner, and copies `sites.org_id` onto `ai_usage.org_id`.
+
+| Role | May |
+|---|---|
+| `viewer` | Read sites, versions, messages, domains, integration status, members and the activity log |
+| `editor` | Viewer, plus edit content, upload images, use AI, publish and unpublish, delete messages |
+| `admin` | Editor, plus add sites, invite and remove members, change non-owner roles, manage domains and integrations |
+| `owner` | Everything, including delete sites, grant or remove the owner role and transfer ownership |
+
+Every route resolves its site or organization through `src/access.ts` (`requireSiteRole`, `requireOrgRole`) before touching data. An organization always keeps at least one owner. An organization is created by the first `POST /sites` without `orgId` and deleted with its last site, members, invitations and events included.
+
+**Invitations.** `POST /orgs/:id/invitations` stores only the SHA-256 of a 32-byte token (`org_invitations.token_hash`), valid for 7 days, and emails `<ALLOWED_ORIGIN>/invite/<token>` through the platform sender (`EMAIL_PROVIDER`). Re-inviting an address replaces its pending link. The web app's `/invite/:token` page shows the public preview and lets the invitee sign in and accept; accepting binds the Clerk user whose email matches. The per-day cap counts `member.invited` audit events, so revoking frees no slots.
+
+**AI quota.** The reservation that every call takes (see *AI quota* above) checks the caller's `AI_DAILY_LIMIT` (default 30), then the organization's `AI_DAILY_LIMIT_ORG` (default 100, all members together, counted on `ai_usage.org_id`), then `AI_GLOBAL_DAILY_LIMIT`; all reset at midnight UTC.
+
+**Activity log.** `org_events (org_id, actor_user_id, action, target, detail_json, created_at)` records membership changes (`member.invited`, `member.joined`, `member.role_changed`, `member.removed`, `invitation.revoked`, `ownership.transferred`), `site.published`, `site.unpublished`, `site.deleted`, `domain.added`, `domain.removed` and `integration.connected` / `updated` / `disconnected`. `actor_user_id` is null when the system acted. Details never contain secrets (an integration event keeps the key hint only).
+
+**Clerk `user.deleted` webhook.** In the Clerk dashboard add an endpoint `https://<api host>/webhooks/clerk` subscribed to `user.deleted`, then store its signing secret: `npx wrangler secret put CLERK_WEBHOOK_SECRET` (value `whsec_…`). Signatures are verified with the Svix scheme (`src/webhooks/svix.ts`: HMAC-SHA256 over `id.timestamp.body`, 5-minute tolerance, several `v1,` entries accepted during rotation). On `user.deleted` the account's memberships are removed with a `member.removed` event (`reason: account_deleted`), its `users.email` is set to null, and content stays with its organizations; where it was the last owner, the longest-standing admin (else editor, else viewer) is promoted to owner. Other event types are acknowledged and ignored.
 
 #### AI quota
 
@@ -107,7 +141,7 @@ A provider that is selected but missing its binding or key falls back to store-o
 
 #### Organization email (bring your own Resend)
 
-An organization can connect its own Resend account so contact-form email leaves from its own domain and reputation instead of the platform's. Routes are under `/orgs/:id/integrations` (table above); only the organization's owner or an admin can use them (anyone else gets 404), and every response is `Cache-Control: no-store`.
+An organization can connect its own Resend account so contact-form email leaves from its own domain and reputation instead of the platform's. Routes are under `/orgs/:id/integrations` (table above); any member can read the status, admins and owners can change it (non-members get 404), and every response is `Cache-Control: no-store`.
 
 Setup flow: `PUT .../resend/key` with the API key, then `PUT .../resend/from` with an address on a domain the organization verified in Resend, then `POST .../resend/test`.
 
@@ -145,14 +179,15 @@ Values are strings. A missing, zero, negative or non-numeric value falls back to
 | `MAX_PUBLISHES_PER_HOUR` | `20` | `POST /sites/:id/publish` | 429 with `Retry-After` (seconds until a slot frees) per site per rolling hour |
 | `MAX_DOMAINS_PER_SITE` | `3` | `POST /sites/:id/domains` | 429. Every domain of the site, primary and redirects, proved or not |
 | `MAX_DOMAINS_PER_USER` | `10` | `POST /sites/:id/domains` | 429. Domains across every site in organizations the user owns; admins are exempt |
-| `AI_DAILY_LIMIT` | `30` | every `POST .../ai/*` | 429 `{ used, limit, resetsAt }` per user per UTC day (see *AI quota*) |
-| `AI_GLOBAL_DAILY_LIMIT` | `2000` | every `POST .../ai/*` | 429 for every user for the rest of the UTC day; logged as `ai_global_limit_reached` |
+| `AI_DAILY_LIMIT` | `30` | every `POST .../ai/*` | 429 `{ scope: "user", used, limit, resetsAt }` per user per UTC day (see *AI quota*) |
+| `AI_DAILY_LIMIT_ORG` | `100` | every `POST .../ai/*` | 429 `scope: "organization"`; calls per organization per UTC day, all members together |
+| `AI_GLOBAL_DAILY_LIMIT` | `2000` | every `POST .../ai/*` | 429 `scope: "global"` for every user for the rest of the UTC day; logged as `ai_global_limit_reached` |
 
 The per-file upload limit stays a constant of 5 MB (`src/routes/assets.ts`). The publish count lives in the `publish_events` table (one row per attempt that passed validation; rows older than a day are deleted on the next publish of that site), because publishing does not create a `site_versions` row. Apply the new migration (`wrangler d1 migrations apply ministry-sites --remote`) before deploying. For the site, storage, version, publish and domain limits the count is read before the write, so two simultaneous requests can overshoot by one; that is accepted. The AI limits are reserved atomically (see *AI quota*).
 
 ### Response headers
 
-Every API response (`src/security.ts`) carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, `Permissions-Policy: camera=(), microphone=(), geolocation=()` and, over HTTPS, `Strict-Transport-Security: max-age=31536000; includeSubDomains`. Routes under `/sites`, `/ai`, `/admin` and `/orgs` (errors included) also send `Cache-Control: no-store`.
+Every API response (`src/security.ts`) carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, `Permissions-Policy: camera=(), microphone=(), geolocation=()` and, over HTTPS, `Strict-Transport-Security: max-age=31536000; includeSubDomains`. Routes under `/sites`, `/ai`, `/admin`, `/orgs`, `/invitations` and `/webhooks` (errors included) also send `Cache-Control: no-store`.
 
 Published-site responses (pages, images, thank-you and error pages, redirects, form answers, `robots.txt`, `sitemap.xml`) carry nosniff, the same `Referrer-Policy`, `X-Frame-Options: SAMEORIGIN`, HSTS and a Content-Security-Policy:
 
@@ -185,6 +220,7 @@ Error lines are one JSON object with `event` and `request_id` (the `cf-ray` head
 | `INTEGRATIONS_KEY` | `openssl rand -base64 32 \| npx wrangler secret put INTEGRATIONS_KEY` | Optional. Encrypts organizations' own Resend API keys at rest (see "Organization email"). Without it the integration routes answer 503. Never rotate casually: stored keys stop decrypting |
 | `STAFF_API_TOKEN` | same, name `STAFF_API_TOKEN` | Optional. Requests with header `X-Staff-Token: <value>` act as the admin user `staff-bot` |
 | `CLOUDFLARE_API_TOKEN` | same, name `CLOUDFLARE_API_TOKEN` | Optional. Custom domains (see below). Without it, or without the `CLOUDFLARE_ZONE_ID` var, the domain routes answer 503 and the editor hides the add form |
+| `CLERK_WEBHOOK_SECRET` | same, name `CLERK_WEBHOOK_SECRET` | Optional. Signing secret of the Clerk webhook endpoint (`whsec_…`); enables `POST /webhooks/clerk` (see "Organizations and roles") |
 
 Without either AI key the AI routes answer 503. When only one key is set it is used; when both are set OpenAI wins unless the `AI_PROVIDER` var is `anthropic` (or `openai`). Setting `AI_PROVIDER` to a provider whose key is missing disables the copilot rather than falling back. Both adapters live in `src/ai/` behind the same `AiProvider` interface; the Anthropic one uses structured outputs (`output_config.format`) so the JSON matches the schema's shape, and both validate with Zod and allow one repair round.
 

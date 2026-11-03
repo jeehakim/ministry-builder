@@ -80,6 +80,8 @@ export const AiUsageResponse = z.object({
   resetsAt: z.string(),
   /** False when the server has no AI key configured. */
   available: z.boolean(),
+  /** The organization's own daily count and limit, present when the request named an organization the caller belongs to. */
+  organization: z.object({ used: z.number().int().nonnegative(), limit: z.number().int().positive() }).optional(),
 });
 export type AiUsageResponse = z.infer<typeof AiUsageResponse>;
 

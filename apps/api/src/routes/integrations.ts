@@ -9,12 +9,13 @@ import { asc, and, eq, gte, lt, sql } from "drizzle-orm";
 import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { loadAuthorizedOrg } from "../access";
+import { requireOrgRole } from "../access";
 import { DecryptionError, decryptSecret, encryptSecret, isEncryptionAvailable } from "../crypto";
 import { integrationEvents, orgIntegrations, type OrgIntegration, type Organization } from "../db/schema";
 import { createSender } from "../email";
 import { emailDomain, formatFrom, isSafeDisplayName } from "../email/from";
 import { listVerifiedResendDomains, resendSender, ResendKeyRejectedError, ResendUnavailableError } from "../email/resend";
+import { recordOrgEvent } from "../events";
 import { newId } from "../ids";
 import { errorFields, logError, requestIdOf, scrub } from "../log";
 import type { AppEnv } from "../types";
@@ -71,12 +72,15 @@ async function loadRow(db: DrizzleD1Database, orgId: string): Promise<OrgIntegra
   return row;
 }
 
-/** 404 unless the caller owns the organization (or is an admin); 503 for write routes when the server cannot encrypt. */
+/**
+ * Any member may read the integration status; writes need an admin or owner (403 otherwise).
+ * 404 when the organization is missing or the caller is not a member; 503 for writes when the server cannot encrypt.
+ */
 async function authorize(c: Ctx, db: DrizzleD1Database, write: boolean): Promise<Organization | Response> {
-  const org = await loadAuthorizedOrg(db, c.var.user, c.req.param("id") ?? "");
-  if (!org) return c.json({ error: "Organization not found" }, 404);
+  const access = await requireOrgRole(c, db, c.req.param("id") ?? "", write ? "admin" : "viewer");
+  if (access instanceof Response) return access;
   if (write && !isEncryptionAvailable(c.env)) return c.json({ error: NOT_ENABLED }, 503);
-  return org;
+  return access.org;
 }
 
 /**
@@ -165,6 +169,7 @@ integrationRoutes.put("/orgs/:id/integrations/resend/key", limit4k, async (c) =>
     .insert(orgIntegrations)
     .values({ id: newId("oint"), orgId: org.id, provider: "resend", ...fields })
     .onConflictDoUpdate({ target: orgIntegrations.orgId, set: fields });
+  await recordOrgEvent(db, { orgId: org.id, actorUserId: c.var.user.id, action: "integration.connected", target: "resend", detail: { keyHint: fields.keyHint } });
   return c.json(integrationsResponse(c.env, await loadRow(db, org.id)));
 });
 
@@ -228,6 +233,7 @@ integrationRoutes.put("/orgs/:id/integrations/resend/from", limit4k, async (c) =
       updatedAt: new Date(),
     })
     .where(eq(orgIntegrations.id, row.id));
+  await recordOrgEvent(db, { orgId: org.id, actorUserId: c.var.user.id, action: "integration.updated", target: "resend", detail: { fromAddress } });
   return c.json(integrationsResponse(c.env, await loadRow(db, org.id)));
 });
 
@@ -276,8 +282,10 @@ integrationRoutes.post("/orgs/:id/integrations/resend/test", limit4k, async (c) 
 // Deleting needs no encryption: it must stay possible after INTEGRATIONS_KEY is removed or rotated.
 integrationRoutes.delete("/orgs/:id/integrations/resend", async (c) => {
   const db = drizzle(c.env.DB);
-  const org = await authorize(c, db, false);
-  if (org instanceof Response) return org;
+  const access = await requireOrgRole(c, db, c.req.param("id") ?? "", "admin");
+  if (access instanceof Response) return access;
+  const org = access.org;
   await db.delete(orgIntegrations).where(eq(orgIntegrations.orgId, org.id));
+  await recordOrgEvent(db, { orgId: org.id, actorUserId: c.var.user.id, action: "integration.disconnected", target: "resend" });
   return c.json(integrationsResponse(c.env, undefined));
 });

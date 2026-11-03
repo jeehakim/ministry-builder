@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
-import type { SiteDocument } from "@ministry/schema";
-import { AlertCircle, ArrowLeft, Globe, Mail, Settings, TriangleAlert, type LucideIcon } from "lucide-react";
+import type { OrgRole, SiteDocument } from "@ministry/schema";
+import { AlertCircle, ArrowLeft, Globe, History, Mail, Settings, TriangleAlert, Users, type LucideIcon } from "lucide-react";
 import type { SiteInfo } from "../api";
 import { useBackend } from "../backend-context";
 import { ApiUnreachableBanner } from "../components/ApiUnreachableBanner";
@@ -12,23 +12,36 @@ import { ThemeToggle } from "../components/ThemeToggle";
 import { UserMenu } from "../components/UserMenu";
 import { isNetworkError } from "../lib/errors";
 import { platformContactEmail } from "../lib/messages";
+import { can, type Action } from "../lib/roles";
+import { useOrg, useSyncOrgToPage } from "../orgs/OrgContext";
+import { OrgSwitcher } from "../orgs/OrgSwitcher";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ActivityPanel } from "./ActivityPanel";
 import { EmailDeliveryPanel } from "./EmailDeliveryPanel";
+import { MembersPanel } from "./MembersPanel";
 
 const SECTIONS = [
   { key: "email", label: "Email delivery", Icon: Mail },
   { key: "domain", label: "Domain", Icon: Globe },
-  { key: "danger", label: "Danger zone", Icon: TriangleAlert },
-] as const satisfies readonly { key: string; label: string; Icon: LucideIcon }[];
+  { key: "members", label: "Members", Icon: Users },
+  { key: "activity", label: "Activity", Icon: History },
+  // Only for owners: everyone else never sees the entry.
+  { key: "danger", label: "Danger zone", Icon: TriangleAlert, requires: "deleteSite" },
+] as const satisfies readonly { key: string; label: string; Icon: LucideIcon; requires?: Action }[];
 
 type SectionKey = (typeof SECTIONS)[number]["key"];
 
-function sectionFrom(value: string | null): SectionKey {
-  return SECTIONS.find((s) => s.key === value)?.key ?? "email";
+/** The sections this role may open. */
+function visibleSections(role: OrgRole) {
+  return SECTIONS.filter((s) => !("requires" in s) || can(role, s.requires));
+}
+
+function sectionFrom(value: string | null, role: OrgRole): SectionKey {
+  return visibleSections(role).find((s) => s.key === value)?.key ?? "email";
 }
 
 type Load =
@@ -65,7 +78,10 @@ export function SettingsPage() {
     <div className="min-h-dvh bg-muted/30">
       <header className="border-b bg-background">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
-          <Brand />
+          <div className="flex min-w-0 items-center gap-2">
+            <Brand />
+            <OrgSwitcher leaveOnSelect />
+          </div>
           <div className="flex items-center gap-1">
             <HelpMenu />
             <ThemeToggle />
@@ -110,18 +126,22 @@ export function SettingsPage() {
             </Button>
           </div>
         ) : (
-          <SettingsView site={load.site} doc={load.doc} />
+          <SettingsView site={load.site} doc={load.doc} onReload={() => setAttempt((n) => n + 1)} />
         )}
       </div>
     </div>
   );
 }
 
-function SettingsView({ site, doc }: { site: SiteInfo; doc: SiteDocument }) {
+function SettingsView({ site, doc, onReload }: { site: SiteInfo; doc: SiteDocument; onReload: () => void }) {
   const navigate = useNavigate();
   const backend = useBackend();
+  const { orgs } = useOrg();
   const [params] = useSearchParams();
-  const section = sectionFrom(params.get("section"));
+  useSyncOrgToPage(site.orgId);
+  const section = sectionFrom(params.get("section"), site.role);
+  const sections = visibleSections(site.role);
+  const orgDisplayName = orgs.find((o) => o.id === site.orgId)?.name ?? (doc.meta.orgName || "this organization");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const contactEmail = useMemo(() => platformContactEmail(doc), [doc]);
   const orgName = doc.meta.orgName || "Untitled site";
@@ -138,7 +158,7 @@ function SettingsView({ site, doc }: { site: SiteInfo; doc: SiteDocument }) {
         </Button>
         <p className="px-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">Settings</p>
         <nav aria-label="Settings sections" className="space-y-1">
-          {SECTIONS.map(({ key, label, Icon }) => (
+          {sections.map(({ key, label, Icon }) => (
             <Link
               key={key}
               to={`?section=${key}`}
@@ -169,11 +189,9 @@ function SettingsView({ site, doc }: { site: SiteInfo; doc: SiteDocument }) {
               <p className="text-sm text-muted-foreground">Choose who sends the messages from your site's contact form.</p>
             </div>
             {site.orgId ? (
-              <EmailDeliveryPanel orgId={site.orgId} contactEmail={contactEmail} />
+              <EmailDeliveryPanel orgId={site.orgId} contactEmail={contactEmail} canManage={can(site.role, "manageIntegrations")} />
             ) : (
-              <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                The server did not say which organization owns this site, so email settings cannot load.
-              </p>
+              <MissingOrg what="email settings" />
             )}
           </section>
         ) : null}
@@ -189,6 +207,9 @@ function SettingsView({ site, doc }: { site: SiteInfo; doc: SiteDocument }) {
                 Open the editor, click <strong>Publish</strong>, and scroll to <strong>Custom domain</strong>. Add your domain there and copy the DNS record it
                 shows to your registrar.
               </p>
+              {can(site.role, "manageDomains") ? null : (
+                <p className="text-muted-foreground">Only admins and owners can add or remove domains. You can still see their status and DNS records.</p>
+              )}
               <div className="flex flex-wrap gap-2">
                 <Button asChild variant="outline" size="sm">
                   <Link to={editorPath}>Open the editor</Link>
@@ -199,6 +220,30 @@ function SettingsView({ site, doc }: { site: SiteInfo; doc: SiteDocument }) {
               </div>
             </CardContent>
           </Card>
+        ) : null}
+
+        {section === "members" ? (
+          <section aria-label="Members" className="space-y-5">
+            <div>
+              <h2 className="text-lg font-semibold tracking-tight">Members</h2>
+              <p className="text-sm text-muted-foreground">Who can work in {orgDisplayName}, and what they can do. Members have access to every site in the organization.</p>
+            </div>
+            {site.orgId ? (
+              <MembersPanel orgId={site.orgId} orgName={orgDisplayName} role={site.role} onCallerRoleChanged={onReload} />
+            ) : (
+              <MissingOrg what="members" />
+            )}
+          </section>
+        ) : null}
+
+        {section === "activity" ? (
+          <section aria-label="Activity" className="space-y-5">
+            <div>
+              <h2 className="text-lg font-semibold tracking-tight">Activity</h2>
+              <p className="text-sm text-muted-foreground">The latest changes to {orgDisplayName}, newest first.</p>
+            </div>
+            {site.orgId ? <ActivityPanel orgId={site.orgId} /> : <MissingOrg what="activity" />}
+          </section>
         ) : null}
 
         {section === "danger" ? (
@@ -225,5 +270,13 @@ function SettingsView({ site, doc }: { site: SiteInfo; doc: SiteDocument }) {
         onDeleted={() => void navigate("/", { replace: true })}
       />
     </div>
+  );
+}
+
+function MissingOrg({ what }: { what: string }) {
+  return (
+    <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+      The server did not say which organization owns this site, so {what} cannot load.
+    </p>
   );
 }

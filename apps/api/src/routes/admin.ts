@@ -1,10 +1,11 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { organizations, sites, users } from "../db/schema";
+import { orgMembers, organizations, sites, users } from "../db/schema";
+import { orgEventInsert } from "../events";
 import { errorFields, logError, requestIdOf } from "../log";
 import { publishedUrlFor } from "../published";
 import type { AppEnv } from "../types";
@@ -35,7 +36,7 @@ async function findClerkUserId(secretKey: string, email: string): Promise<string
 export const adminRoutes = new Hono<AppEnv>();
 
 adminRoutes.use("/admin/*", requireAdmin);
-adminRoutes.use("/orgs/*", requireAdmin);
+adminRoutes.use("/orgs/:id/transfer", requireAdmin);
 
 adminRoutes.get("/admin/sites", async (c) => {
   const rows = await drizzle(c.env.DB)
@@ -60,7 +61,10 @@ adminRoutes.get("/admin/sites", async (c) => {
   });
 });
 
-/** Hands an organization (and with it all its sites) to the person who owns the given email in Clerk. */
+/**
+ * Hands an organization (and with it all its sites) to the person who owns the given email in Clerk:
+ * they become an owner member and every previous owner leaves the organization. Members use POST /orgs/:id/transfer-ownership instead.
+ */
 adminRoutes.post(
   "/orgs/:id/transfer",
   bodyLimit({ maxSize: 4 * 1024, onError: (c) => c.json({ error: "Body too large" }, 413) }),
@@ -91,6 +95,13 @@ adminRoutes.post(
         .values({ id: ownerUserId, email })
         .onConflictDoUpdate({ target: users.id, set: { email } }),
       db.update(organizations).set({ ownerUserId }).where(eq(organizations.id, orgId)),
+      // A hand-over: whoever built the site for them (staff, a volunteer) drops out of the organization.
+      db.delete(orgMembers).where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.role, "owner"), ne(orgMembers.userId, ownerUserId))),
+      db
+        .insert(orgMembers)
+        .values({ orgId, userId: ownerUserId, role: "owner", invitedBy: c.var.user.id })
+        .onConflictDoUpdate({ target: [orgMembers.orgId, orgMembers.userId], set: { role: "owner" } }),
+      orgEventInsert(db, { orgId, actorUserId: c.var.user.id, action: "ownership.transferred", target: ownerUserId, detail: { email, staff: true } }),
     ]);
     return c.json({ orgId, ownerUserId });
   },

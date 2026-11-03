@@ -5,6 +5,7 @@ import { EditorPage } from "./editor/EditorPage";
 import { AiGuide } from "./guides/AiGuide";
 import { DomainsGuide } from "./guides/DomainsGuide";
 import { EmailGuide } from "./guides/EmailGuide";
+import { InvitePage } from "./invite/InvitePage";
 import { PublishGuide } from "./guides/PublishGuide";
 import { SettingsPage } from "./settings/SettingsPage";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ export function App() {
       <Route path="/" element={<Home />} />
       <Route path="/sites/:id" element={<EditorPage />} />
       <Route path="/sites/:id/settings" element={<SettingsPage />} />
+      <Route path="/invite/:token" element={<InvitePage />} />
       <Route path="/guide/ai" element={<AiGuide />} />
       <Route path="/guide/publish" element={<PublishGuide />} />
       <Route path="/guide/domains" element={<DomainsGuide />} />

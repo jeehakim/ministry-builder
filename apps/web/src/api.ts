@@ -1,16 +1,27 @@
 import {
+  AcceptInvitationResponse,
   AiAltTextResponse,
   AiDraftResponse,
   AiRewriteResponse,
   AiThemeResponse,
   AiTranslateResponse,
   AiUsageResponse,
+  CreateInvitationResponse,
+  EventsResponse,
   IntegrationsResponse,
+  InvitationPreview,
+  MembersResponse,
+  OrgMember,
+  OrgRole,
+  OrgsResponse,
   SiteDocument,
   type AiDraftRequest,
   type AiRewriteRequest,
   type AiThemeRequest,
   type AiTranslateRequest,
+  type CreateInvitationRequest,
+  type OrgEvent,
+  type OrgSummary,
   type SendTestEmailRequest,
   type SetResendFromRequest,
   type SetResendKeyRequest,
@@ -20,6 +31,10 @@ import { MESSAGES_LIMIT, parseMessagesResponse, type ContactMessage } from "./li
 
 export interface SiteSummary {
   id: string;
+  /** The organization that owns the site. Null in local mode. */
+  orgId: string | null;
+  /** The caller's role in that organization. */
+  role: OrgRole;
   slug: string;
   orgName: string;
   updatedAt: string;
@@ -31,11 +46,20 @@ export interface SiteInfo {
   id: string;
   /** The organization (Clerk org or user) that owns the site; integrations are scoped to it. Null in local mode. */
   orgId: string | null;
+  /** The caller's role in the owning organization. Local mode: "owner". */
+  role: OrgRole;
   slug: string;
   publishedUrl: string | null;
   publishedAt: string | null;
   /** Contact form messages stored for the site. */
   messageCount: number;
+}
+
+/** What `POST /sites` needs. With `orgId` the site joins that organization; without it a new organization is created. */
+export interface CreateSiteInput {
+  /** Name of the new organization, or of the site when `orgId` is set (the server defaults to the organization's name). */
+  orgName?: string;
+  orgId?: string;
 }
 
 export interface LoadedSite {
@@ -131,8 +155,9 @@ const AI_DRAFT_TIMEOUT_MS = 120_000;
 const AI_TRANSLATE_TIMEOUT_MS = 90_000;
 
 export interface ApiClient {
-  listSites(): Promise<SiteSummary[]>;
-  createSite(orgName: string): Promise<LoadedSite>;
+  /** The caller's sites: one organization's with `orgId`, otherwise every organization's. */
+  listSites(orgId?: string): Promise<SiteSummary[]>;
+  createSite(input: CreateSiteInput): Promise<LoadedSite>;
   getSite(id: string): Promise<LoadedSite>;
   saveDocument(id: string, document: SiteDocument): Promise<{ versionId: string }>;
   uploadAsset(siteId: string, file: Blob, fileName: string): Promise<UploadedAsset>;
@@ -154,12 +179,25 @@ export interface ApiClient {
   setResendFrom(orgId: string, body: SetResendFromRequest): Promise<IntegrationsResponse>;
   sendResendTest(orgId: string, body: SendTestEmailRequest): Promise<IntegrationsResponse>;
   disconnectResend(orgId: string): Promise<void>;
-  aiUsage(): Promise<AiUsageResponse>;
+  /** `orgId` adds the organization's own count to the response. */
+  aiUsage(orgId?: string): Promise<AiUsageResponse>;
   aiDraft(siteId: string, body: AiDraftRequest): Promise<AiDraftResponse>;
   aiRewrite(siteId: string, body: AiRewriteRequest): Promise<AiRewriteResponse>;
   aiTheme(siteId: string, body: AiThemeRequest): Promise<AiThemeResponse>;
   aiAltText(siteId: string, assetKey: string): Promise<AiAltTextResponse>;
   aiTranslate(siteId: string, language: string): Promise<AiTranslateResponse>;
+  listOrgs(): Promise<OrgSummary[]>;
+  orgMembers(orgId: string): Promise<MembersResponse>;
+  updateMember(orgId: string, userId: string, role: OrgRole): Promise<OrgMember>;
+  removeMember(orgId: string, userId: string): Promise<void>;
+  invite(orgId: string, body: CreateInvitationRequest): Promise<CreateInvitationResponse>;
+  revokeInvitation(orgId: string, invitationId: string): Promise<void>;
+  /** Public: sends no credentials, so it works before sign-in. */
+  previewInvitation(token: string): Promise<InvitationPreview>;
+  acceptInvitation(token: string): Promise<AcceptInvitationResponse>;
+  transferOwnership(orgId: string, userId: string): Promise<void>;
+  /** Newest first. */
+  orgEvents(orgId: string): Promise<OrgEvent[]>;
 }
 
 type ErrorFactory = (status: number, message: string, body: unknown) => ApiError;
@@ -184,14 +222,29 @@ interface Parser<T> {
 interface RawSiteInfo {
   id: string;
   orgId?: string | null;
+  role?: unknown;
   slug: string;
   publishedUrl?: string | null;
   publishedAt?: string | null;
   messageCount?: number;
 }
 
+/** Servers from before organizations send no role; those callers owned their sites, so "owner" keeps them working. */
+function roleOrOwner(raw: unknown): OrgRole {
+  const parsed = OrgRole.safeParse(raw);
+  return parsed.success ? parsed.data : "owner";
+}
+
 function toSiteInfo(raw: RawSiteInfo): SiteInfo {
-  return { id: raw.id, orgId: raw.orgId ?? null, slug: raw.slug, publishedUrl: raw.publishedUrl ?? null, publishedAt: raw.publishedAt ?? null, messageCount: raw.messageCount ?? 0 };
+  return {
+    id: raw.id,
+    orgId: raw.orgId ?? null,
+    role: roleOrOwner(raw.role),
+    slug: raw.slug,
+    publishedUrl: raw.publishedUrl ?? null,
+    publishedAt: raw.publishedAt ?? null,
+    messageCount: raw.messageCount ?? 0,
+  };
 }
 
 function isPublishResult(v: unknown): v is PublishResult {
@@ -217,10 +270,13 @@ export function createApiClient(getToken: GetToken, baseUrl: string = API_URL): 
     init: RequestInit,
     timeoutMs: number,
     makeError: ErrorFactory = plainError,
+    authenticated = true,
   ): Promise<T> {
-    const token = await getToken();
     const headers = new Headers(init.headers);
-    if (token) headers.set("Authorization", `Bearer ${token}`);
+    if (authenticated) {
+      const token = await getToken();
+      if (token) headers.set("Authorization", `Bearer ${token}`);
+    }
 
     let res: Response;
     try {
@@ -271,17 +327,26 @@ export function createApiClient(getToken: GetToken, baseUrl: string = API_URL): 
     return parsed.data;
   }
 
+  const orgPath = (orgId: string) => `/orgs/${encodeURIComponent(orgId)}`;
+
+  /** Request plus response validation with a shared schema; a drifting shape is a 502, not a crash. */
+  async function validated<T>(path: string, parser: Parser<T>, init: RequestInit, authenticated = true): Promise<T> {
+    const data = await request<unknown>(path, init, JSON_TIMEOUT_MS, plainError, authenticated);
+    const parsed = parser.safeParse(data);
+    if (!parsed.success) throw new ApiError(502, "The server sent an unexpected response.");
+    return parsed.data;
+  }
+
   return {
-    async listSites() {
-      const data = await request<{ sites: (Omit<SiteSummary, "publishedUrl"> & { publishedUrl?: string | null })[] }>(
-        "/sites",
-        json("GET"),
-        JSON_TIMEOUT_MS,
-      );
-      return data.sites.map((s) => ({ ...s, publishedUrl: s.publishedUrl ?? null }));
+    async listSites(orgId) {
+      const query = orgId ? `?orgId=${encodeURIComponent(orgId)}` : "";
+      const data = await request<{
+        sites: (Omit<SiteSummary, "publishedUrl" | "orgId" | "role"> & { orgId?: string | null; role?: unknown; publishedUrl?: string | null })[];
+      }>(`/sites${query}`, json("GET"), JSON_TIMEOUT_MS);
+      return data.sites.map((s) => ({ ...s, orgId: s.orgId ?? null, role: roleOrOwner(s.role), publishedUrl: s.publishedUrl ?? null }));
     },
-    async createSite(orgName) {
-      const data = await request<{ site: RawSiteInfo; document: unknown }>("/sites", json("POST", { orgName }), JSON_TIMEOUT_MS);
+    async createSite(input) {
+      const data = await request<{ site: RawSiteInfo; document: unknown }>("/sites", json("POST", input), JSON_TIMEOUT_MS);
       return { site: toSiteInfo(data.site), document: SiteDocument.parse(data.document) };
     },
     async getSite(id) {
@@ -350,8 +415,9 @@ export function createApiClient(getToken: GetToken, baseUrl: string = API_URL): 
     async disconnectResend(orgId) {
       await request<unknown>(resendPath(orgId), json("DELETE"), JSON_TIMEOUT_MS);
     },
-    aiUsage() {
-      return aiRequest("/ai/usage", AiUsageResponse, json("GET"), JSON_TIMEOUT_MS);
+    aiUsage(orgId) {
+      const query = orgId ? `?orgId=${encodeURIComponent(orgId)}` : "";
+      return aiRequest(`/ai/usage${query}`, AiUsageResponse, json("GET"), JSON_TIMEOUT_MS);
     },
     aiDraft(siteId, body) {
       return aiRequest(`${sitePath(siteId)}/ai/draft`, AiDraftResponse, json("POST", body), AI_DRAFT_TIMEOUT_MS);
@@ -368,6 +434,39 @@ export function createApiClient(getToken: GetToken, baseUrl: string = API_URL): 
     aiTranslate(siteId, language) {
       const body: AiTranslateRequest = { language };
       return aiRequest(`${sitePath(siteId)}/ai/translate`, AiTranslateResponse, json("POST", body), AI_TRANSLATE_TIMEOUT_MS);
+    },
+    async listOrgs() {
+      return (await validated("/orgs", OrgsResponse, json("GET"))).orgs;
+    },
+    orgMembers(orgId) {
+      return validated(`${orgPath(orgId)}/members`, MembersResponse, json("GET"));
+    },
+    async updateMember(orgId, userId, role) {
+      const data = await request<unknown>(`${orgPath(orgId)}/members/${encodeURIComponent(userId)}`, json("PATCH", { role }), JSON_TIMEOUT_MS);
+      const parsed = OrgMember.safeParse(data && typeof data === "object" && "member" in data ? data.member : undefined);
+      if (!parsed.success) throw new ApiError(502, "The server sent an unexpected response.");
+      return parsed.data;
+    },
+    async removeMember(orgId, userId) {
+      await request<unknown>(`${orgPath(orgId)}/members/${encodeURIComponent(userId)}`, json("DELETE"), JSON_TIMEOUT_MS);
+    },
+    invite(orgId, body) {
+      return validated(`${orgPath(orgId)}/invitations`, CreateInvitationResponse, json("POST", body));
+    },
+    async revokeInvitation(orgId, invitationId) {
+      await request<unknown>(`${orgPath(orgId)}/invitations/${encodeURIComponent(invitationId)}`, json("DELETE"), JSON_TIMEOUT_MS);
+    },
+    previewInvitation(token) {
+      return validated(`/invitations/${encodeURIComponent(token)}`, InvitationPreview, json("GET"), false);
+    },
+    acceptInvitation(token) {
+      return validated(`/invitations/${encodeURIComponent(token)}/accept`, AcceptInvitationResponse, json("POST"));
+    },
+    async transferOwnership(orgId, userId) {
+      await request<unknown>(`${orgPath(orgId)}/transfer-ownership`, json("POST", { userId }), JSON_TIMEOUT_MS);
+    },
+    async orgEvents(orgId) {
+      return (await validated(`${orgPath(orgId)}/events?limit=100`, EventsResponse, json("GET"))).events;
     },
   };
 }

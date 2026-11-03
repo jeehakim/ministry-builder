@@ -25,6 +25,7 @@ export type UsageState =
 
 export const LOCAL_AI_REASON = "AI needs an account. Local mode keeps your site in this browser only, so it is off here.";
 export const NO_KEY_REASON = "No AI key configured on the server";
+export const VIEW_ONLY_REASON = "AI is off because you can only view this site.";
 
 export const DRAFT_BUSY_KEY = "draft";
 export const THEME_BUSY_KEY = "theme";
@@ -78,10 +79,11 @@ function failureText(err: unknown): string {
   return err instanceof Error ? err.message : "Something went wrong with the AI request.";
 }
 
-export function AiProvider({ children }: { children: ReactNode }) {
+export function AiProvider({ orgId = null, readOnly = false, children }: { orgId?: string | null; readOnly?: boolean; children: ReactNode }) {
   const backend = useBackend();
   const siteId = useSiteId();
-  const ai = backend.ai ?? null;
+  // A viewer gets no AI client at all, so every AI button hides itself and nothing is fetched or counted.
+  const ai = readOnly ? null : (backend.ai ?? null);
 
   const [usage, setUsage] = useState<UsageState>(ai ? { kind: "loading" } : { kind: "none" });
   const [busy, setBusy] = useState<Record<string, boolean>>({});
@@ -103,7 +105,7 @@ export function AiProvider({ children }: { children: ReactNode }) {
     if (!ai) return;
     const seq = ++usageSeq.current;
     try {
-      const next = await ai.usage();
+      const next = await ai.usage(orgId ?? undefined);
       if (mounted.current && seq === usageSeq.current) setUsage({ kind: "ready", usage: next });
     } catch (err) {
       if (mounted.current && seq === usageSeq.current) {
@@ -112,7 +114,7 @@ export function AiProvider({ children }: { children: ReactNode }) {
         );
       }
     }
-  }, [ai]);
+  }, [ai, orgId]);
 
   useEffect(() => {
     void refreshUsage();
@@ -142,7 +144,7 @@ export function AiProvider({ children }: { children: ReactNode }) {
       ai,
       usage,
       enabled,
-      disabledReason: enabled ? null : ai === null ? LOCAL_AI_REASON : NO_KEY_REASON,
+      disabledReason: enabled ? null : readOnly ? VIEW_ONLY_REASON : ai === null ? LOCAL_AI_REASON : NO_KEY_REASON,
       busy,
       refreshUsage,
       runDraft: (request) => run(DRAFT_BUSY_KEY, (client) => client.draft(siteId, request)),
@@ -162,7 +164,7 @@ export function AiProvider({ children }: { children: ReactNode }) {
       runTheme: (request) => run(THEME_BUSY_KEY, (client) => client.theme(siteId, request)),
       runTranslate: (language) => run(TRANSLATE_BUSY_KEY, (client) => client.translate(siteId, language)),
     };
-  }, [ai, usage, busy, refreshUsage, run, siteId]);
+  }, [ai, readOnly, usage, busy, refreshUsage, run, siteId]);
 
   return <AiContext.Provider value={value}>{children}</AiContext.Provider>;
 }

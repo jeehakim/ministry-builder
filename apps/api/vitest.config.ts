@@ -13,6 +13,9 @@ export default defineConfig(async () => {
             // Deterministic AI provider, a low daily limit to exercise the quota, and a known staff token.
             AI_PROVIDER: "fake",
             AI_DAILY_LIMIT: "4",
+            AI_DAILY_LIMIT_ORG: "6",
+            // Clerk webhook: a known Svix secret (base64 of "test-webhook-secret-bytes"); signatures are computed in test/webhooks.test.ts.
+            CLERK_WEBHOOK_SECRET: "whsec_dGVzdC13ZWJob29rLXNlY3JldC1ieXRlcw==",
             STAFF_API_TOKEN: "test-staff-token",
             // Custom domains: the Cloudflare API is stubbed in test/domains.test.ts.
             CLOUDFLARE_API_TOKEN: "test-cf-token",
