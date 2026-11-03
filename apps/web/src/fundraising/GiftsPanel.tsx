@@ -28,6 +28,8 @@ function thankYouStatus(gift: Gift): { label: string; detail: string | null; var
 
 /** The gifts of a campaign: a table with add, CSV import and delete. Totals come from the server after every change. */
 export function GiftsPanel(props: {
+  /** Viewers see the gifts and totals but cannot add, import or delete. */
+  readOnly?: boolean;
   fundraising: FundraisingBackend;
   siteId: string;
   campaignId: string;
@@ -36,7 +38,7 @@ export function GiftsPanel(props: {
   totals: CampaignTotals;
   onChange: (gifts: Gift[], totals: CampaignTotals) => void;
 }) {
-  const { fundraising, siteId, campaignId, currency, gifts, totals, onChange } = props;
+  const { readOnly = false, fundraising, siteId, campaignId, currency, gifts, totals, onChange } = props;
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -78,6 +80,7 @@ export function GiftsPanel(props: {
             through your processor or by hand; the page shows the total on the next publish.
           </CardDescription>
         </div>
+        {readOnly ? null : (
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => setImporting(true)}>
             <FileUp />
@@ -88,6 +91,7 @@ export function GiftsPanel(props: {
             Add gift
           </Button>
         </div>
+        )}
       </CardHeader>
       <CardContent>
         {gifts.length === 0 ? (
@@ -140,7 +144,7 @@ export function GiftsPanel(props: {
                         )}
                       </td>
                       <td className="py-2 text-right">
-                        {confirming === g.id ? (
+                        {readOnly ? null : confirming === g.id ? (
                           <span className="inline-flex items-center gap-1" role="group" aria-label="Confirm delete">
                             <Button type="button" variant="destructive" size="xs" disabled={deleting === g.id} onClick={() => void remove(g)}>
                               {deleting === g.id ? <Loader2 className="animate-spin" /> : null}

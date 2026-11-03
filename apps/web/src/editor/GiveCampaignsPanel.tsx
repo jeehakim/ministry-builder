@@ -16,7 +16,17 @@ type Load = { kind: "loading" } | { kind: "error"; message: string } | { kind: "
  * Below the Give section's fields: which campaigns will appear as cards when the site is published.
  * Empty selection means every active campaign; ticking any campaign switches to an explicit list.
  */
-export function GiveCampaignsPanel({ section, orgId, onChange }: { section: GiveSection; orgId: string | null; onChange: (campaigns: string[]) => void }) {
+export function GiveCampaignsPanel({
+  section,
+  readOnly = false,
+  onChange,
+}: {
+  section: GiveSection;
+  /** Kept for callers that pass it; fundraising always opens on the current organization. */
+  orgId?: string | null;
+  readOnly?: boolean;
+  onChange: (campaigns: string[]) => void;
+}) {
   const backend = useBackend();
   const siteId = useSiteId();
   const [load, setLoad] = useState<Load>({ kind: "loading" });
@@ -37,7 +47,7 @@ export function GiveCampaignsPanel({ section, orgId, onChange }: { section: Give
   }, [backend, siteId]);
 
   if (!backend.fundraising) return null;
-  const fundraisingPath = `/fundraising${orgId ? `?org=${encodeURIComponent(orgId)}` : ""}`;
+  const fundraisingPath = "/fundraising";
 
   return (
     <div className="space-y-2 border-t pt-4">
@@ -77,6 +87,7 @@ export function GiveCampaignsPanel({ section, orgId, onChange }: { section: Give
                     className="mt-0.5 size-3.5 accent-brand"
                     aria-label={`Show ${c.title}`}
                     checked={checked}
+                    disabled={readOnly}
                     onChange={(e) => onChange(e.target.checked ? [...section.campaigns, c.id] : section.campaigns.filter((id) => id !== c.id))}
                   />
                   <span className="min-w-0 flex-1">

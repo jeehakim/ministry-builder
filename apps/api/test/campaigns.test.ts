@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseCsv, parseGiftCsv } from "../src/campaigns";
-import { aiUsage, donors, gifts } from "../src/db/schema";
+import { aiUsage, donors, gifts, orgMembers, users } from "../src/db/schema";
 import { fillThankYou, thankYouEmail } from "../src/email/thankYou";
 import realApp from "../src/index";
 import { call, jsonInit, makeSite, uploadPng, type TestSite } from "./helpers";
@@ -112,6 +112,43 @@ describe("campaign routes", () => {
     expect(org.campaigns).toHaveLength(1);
     expect(org.campaigns[0]).toMatchObject({ id: campaign.id, siteSlug: site.slug });
     expect(org.sites.map((s) => s.id)).toEqual([site.id]);
+  });
+});
+
+describe("campaign roles", () => {
+  async function member(orgId: string, userId: string, role: "viewer" | "editor" | "admin") {
+    await db().insert(users).values({ id: userId, role: "member" }).onConflictDoNothing();
+    await db().insert(orgMembers).values({ orgId, userId, role, invitedBy: null });
+  }
+
+  it("lets viewers read, editors edit and record gifts, and only admins delete a campaign", async () => {
+    const site = await makeSite("role_owner", "Roles Org");
+    const campaign = await createCampaign("role_owner", site);
+    await member(site.orgId, "role_viewer", "viewer");
+    await member(site.orgId, "role_editor", "editor");
+    await member(site.orgId, "role_admin", "admin");
+    const base = `/sites/${site.id}/campaigns/${campaign.id}`;
+
+    // Viewers read everything, including the organization-wide list, and change nothing.
+    expect((await call("role_viewer", base)).status).toBe(200);
+    expect((await call("role_viewer", `${base}/gifts`)).status).toBe(200);
+    expect((await call("role_viewer", `${base}/totals`)).status).toBe(200);
+    expect((await call("role_viewer", `/orgs/${site.orgId}/campaigns`)).status).toBe(200);
+    expect((await call("role_viewer", `/sites/${site.id}/campaigns`, jsonInit("POST", BASE))).status).toBe(403);
+    expect((await call("role_viewer", base, jsonInit("PUT", BASE))).status).toBe(403);
+    expect((await call("role_viewer", `${base}/gifts`, jsonInit("POST", { amountCents: 100 }))).status).toBe(403);
+    expect((await call("role_viewer", `${base}/gifts/import`, jsonInit("POST", { csv: "amount\n5" }))).status).toBe(403);
+    expect((await call("role_viewer", `${base}/ai/story`, jsonInit("POST", { brief: "A long enough brief here." }))).status).toBe(403);
+
+    // Editors edit and record gifts but cannot delete the campaign with its records.
+    expect((await call("role_editor", base, jsonInit("PUT", { ...BASE, title: "Edited" }))).status).toBe(200);
+    const gift = await addGift("role_editor", site, campaign.id, { amountCents: 500 });
+    expect(gift.gift.recordedBy).toBe("role_editor");
+    expect((await call("role_editor", `${base}/gifts/${gift.gift.id}`, { method: "DELETE" })).status).toBe(200);
+    expect((await call("role_editor", base, { method: "DELETE" })).status).toBe(403);
+
+    expect((await call("role_admin", base, { method: "DELETE" })).status).toBe(200);
+    expect((await call("role_owner", base)).status).toBe(404);
   });
 });
 

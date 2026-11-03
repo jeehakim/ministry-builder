@@ -7,6 +7,7 @@ import { useBackend } from "../backend-context";
 import { useSiteId } from "../editor/EditorContext";
 import { languageUrls } from "../lib/languages";
 import { platformContactEmail } from "../lib/messages";
+import { can } from "../lib/roles";
 import { formatRelativeTime } from "../lib/time";
 import { safeHttpUrl } from "../lib/urls";
 import { Button } from "@/components/ui/button";
@@ -300,7 +301,7 @@ export function PublishModal(props: {
         ) : null}
         {backend.domains ? (
           <>
-            <CustomDomainPanel domains={backend.domains} published={safeHttpUrl(site.publishedUrl) !== null} />
+            <CustomDomainPanel domains={backend.domains} published={safeHttpUrl(site.publishedUrl) !== null} canManage={can(site.role, "manageDomains")} />
             <Separator />
           </>
         ) : null}

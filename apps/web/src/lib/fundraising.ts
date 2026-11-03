@@ -1,31 +1,5 @@
 import { formatMoney, GIFT_CSV_COLUMNS, MAX_SUGGESTED_AMOUNTS, parseAmountToCents, type CampaignStatus, type CampaignTotals } from "@ministry/schema";
 
-/** localStorage key of the organization the dashboard last showed. */
-export const ORG_STORAGE_KEY = "ministry.dashboard.org";
-
-export interface OrgChoice {
-  id: string;
-  name: string;
-}
-
-/** The organizations behind a list of sites, in first-seen order, one entry per id. */
-export function orgsFromSites(sites: { orgId: string; orgName: string }[]): OrgChoice[] {
-  const seen = new Map<string, OrgChoice>();
-  for (const site of sites) if (!seen.has(site.orgId)) seen.set(site.orgId, { id: site.orgId, name: site.orgName });
-  return [...seen.values()];
-}
-
-/**
- * Which organization the dashboard shows: the one named in the URL when it exists, else the one
- * remembered from last time, else the first. Null when there are none.
- */
-export function resolveOrg(orgs: OrgChoice[], requested: string | null, remembered: string | null): string | null {
-  for (const candidate of [requested, remembered]) {
-    if (candidate && orgs.some((o) => o.id === candidate)) return candidate;
-  }
-  return orgs[0]?.id ?? null;
-}
-
 export const STATUS_LABELS: Record<CampaignStatus, string> = { draft: "Draft", active: "Active", closed: "Closed" };
 
 export const STATUS_HINTS: Record<CampaignStatus, string> = {

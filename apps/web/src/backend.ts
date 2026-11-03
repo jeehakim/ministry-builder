@@ -13,6 +13,7 @@ import {
   type AiThankYouRequest,
   type AiThankYouResponse,
   type AiTranslateResponse,
+  type AcceptInvitationResponse,
   type AiUsageResponse,
   type CampaignInput,
   type CampaignTotals,
@@ -21,8 +22,16 @@ import {
   type GiftInput,
   type GiftListResponse,
   type GiftResponse,
+  type CreateInvitationRequest,
+  type CreateInvitationResponse,
   type ImageRef,
   type IntegrationsResponse,
+  type InvitationPreview,
+  type MembersResponse,
+  type OrgEvent,
+  type OrgMember,
+  type OrgRole,
+  type OrgSummary,
   type SendTestEmailRequest,
   type SetResendFromRequest,
   type SetResendKeyRequest,
@@ -30,6 +39,7 @@ import {
 import {
   createApiClient,
   ApiError,
+  type CreateSiteInput,
   type ContactEmailStatus,
   type DomainKind,
   type DomainList,
@@ -46,7 +56,8 @@ import type { ContactMessage } from "./lib/messages";
 
 /** AI copilot calls. Only the API backend has them. */
 export interface AiBackend {
-  usage(): Promise<AiUsageResponse>;
+  /** `orgId` adds the organization's own daily count to the response. */
+  usage(orgId?: string): Promise<AiUsageResponse>;
   draft(siteId: string, request: AiDraftRequest): Promise<AiDraftResponse>;
   rewrite(siteId: string, request: AiRewriteRequest): Promise<AiRewriteResponse>;
   theme(siteId: string, request: AiThemeRequest): Promise<AiThemeResponse>;
@@ -107,14 +118,35 @@ export interface IntegrationsBackend {
   disconnectResend(orgId: string): Promise<void>;
 }
 
+/** Organizations, members, invitations and the audit log. Only the API backend has them. */
+export interface OrgsBackend {
+  /** The caller's organizations with their role in each. */
+  list(): Promise<OrgSummary[]>;
+  /** Members for everyone; pending invitations only for admins and owners. */
+  members(orgId: string): Promise<MembersResponse>;
+  updateMember(orgId: string, userId: string, role: OrgRole): Promise<OrgMember>;
+  removeMember(orgId: string, userId: string): Promise<void>;
+  invite(orgId: string, request: CreateInvitationRequest): Promise<CreateInvitationResponse>;
+  revokeInvitation(orgId: string, invitationId: string): Promise<void>;
+  /** Public: works before sign-in. */
+  previewInvitation(token: string): Promise<InvitationPreview>;
+  acceptInvitation(token: string): Promise<AcceptInvitationResponse>;
+  /** The caller becomes an admin. */
+  transferOwnership(orgId: string, userId: string): Promise<void>;
+  /** Newest first. */
+  events(orgId: string): Promise<OrgEvent[]>;
+}
+
 /**
  * What the editor needs from storage. The hosted implementation talks to the
  * API; the local one uses localStorage. Editor code only sees this interface.
  */
 export interface Backend {
   mode: "api" | "local";
-  listSites(): Promise<SiteSummary[]>;
-  createSite(orgName: string): Promise<LoadedSite>;
+  /** One organization's sites with `orgId`, otherwise all of the caller's. */
+  listSites(orgId?: string): Promise<SiteSummary[]>;
+  /** With `orgId` the site joins that organization; without it a new organization is created. */
+  createSite(input: CreateSiteInput): Promise<LoadedSite>;
   loadSite(id: string): Promise<LoadedSite>;
   saveDocument(id: string, document: SiteDocument): Promise<void>;
   /** Stores an image and returns the value to put in `ImageRef.src`. */
@@ -131,6 +163,8 @@ export interface Backend {
   integrations?: IntegrationsBackend;
   /** Present in API mode only; campaigns live on the server and publish with the site. */
   fundraising?: FundraisingBackend;
+  /** Present in API mode only; local mode is a single private site with no one to share it with. */
+  orgs?: OrgsBackend;
   /** Publishes the saved document on Ministry Sites. API mode only. */
   publish?(siteId: string): Promise<PublishResult>;
   unpublish?(siteId: string): Promise<void>;
@@ -146,8 +180,8 @@ export function createApiBackend(getToken: GetToken): Backend {
   const api = createApiClient(getToken);
   return {
     mode: "api",
-    listSites: () => api.listSites(),
-    createSite: (orgName) => api.createSite(orgName),
+    listSites: (orgId) => api.listSites(orgId),
+    createSite: (input) => api.createSite(input),
     loadSite: (id) => api.getSite(id),
     async saveDocument(id, document) {
       await api.saveDocument(id, document);
@@ -160,7 +194,7 @@ export function createApiBackend(getToken: GetToken): Backend {
       return ref.src.startsWith("/") ? `${API_URL}${ref.src}` : ref.src;
     },
     ai: {
-      usage: () => api.aiUsage(),
+      usage: (orgId) => api.aiUsage(orgId),
       draft: (siteId, request) => api.aiDraft(siteId, request),
       rewrite: (siteId, request) => api.aiRewrite(siteId, request),
       theme: (siteId, request) => api.aiTheme(siteId, request),
@@ -204,6 +238,18 @@ export function createApiBackend(getToken: GetToken): Backend {
       setResendFrom: (orgId, request) => api.setResendFrom(orgId, request),
       sendResendTest: (orgId, request) => api.sendResendTest(orgId, request),
       disconnectResend: (orgId) => api.disconnectResend(orgId),
+    },
+    orgs: {
+      list: () => api.listOrgs(),
+      members: (orgId) => api.orgMembers(orgId),
+      updateMember: (orgId, userId, role) => api.updateMember(orgId, userId, role),
+      removeMember: (orgId, userId) => api.removeMember(orgId, userId),
+      invite: (orgId, request) => api.invite(orgId, request),
+      revokeInvitation: (orgId, invitationId) => api.revokeInvitation(orgId, invitationId),
+      previewInvitation: (token) => api.previewInvitation(token),
+      acceptInvitation: (token) => api.acceptInvitation(token),
+      transferOwnership: (orgId, userId) => api.transferOwnership(orgId, userId),
+      events: (orgId) => api.orgEvents(orgId),
     },
   };
 }
@@ -260,7 +306,10 @@ export function createLocalBackend(): Backend {
   }
 
   function loaded(document: SiteDocument): LoadedSite {
-    return { site: { id: LOCAL_SITE_ID, orgId: null, slug: slugify(document.meta.orgName), publishedUrl: null, publishedAt: null, messageCount: 0 }, document };
+    return {
+      site: { id: LOCAL_SITE_ID, orgId: null, role: "owner", slug: slugify(document.meta.orgName), publishedUrl: null, publishedAt: null, messageCount: 0 },
+      document,
+    };
   }
 
   return {
@@ -271,8 +320,9 @@ export function createLocalBackend(): Backend {
         ? [
             {
               id: LOCAL_SITE_ID,
+              orgId: null,
+              role: "owner",
               slug: slugify(doc.meta.orgName),
-              orgId: LOCAL_SITE_ID,
               orgName: doc.meta.orgName,
               updatedAt: new Date().toISOString(),
               publishedUrl: null,
@@ -281,8 +331,8 @@ export function createLocalBackend(): Backend {
           ]
         : [];
     },
-    async createSite(orgName) {
-      const document = emptySiteDocument(orgName);
+    async createSite({ orgName }) {
+      const document = emptySiteDocument(orgName ?? "Your organization");
       localStorage.setItem(LOCAL_DOC_KEY, JSON.stringify(document));
       return loaded(document);
     },

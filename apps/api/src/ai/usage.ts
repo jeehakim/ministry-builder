@@ -7,6 +7,7 @@ import type { AiCallUsage } from "./provider";
 import type { Bindings } from "../types";
 
 const DEFAULT_DAILY_LIMIT = 30;
+const DEFAULT_ORG_DAILY_LIMIT = 100;
 const DEFAULT_GLOBAL_DAILY_LIMIT = 2000;
 /**
  * A `pending` row older than this no longer counts: the Worker that reserved it died before the
@@ -22,6 +23,11 @@ function positiveInt(value: string | undefined, fallback: number): number {
 /** AI calls allowed per user per UTC day, from the AI_DAILY_LIMIT var. */
 export function dailyLimit(env: Pick<Bindings, "AI_DAILY_LIMIT">): number {
   return positiveInt(env.AI_DAILY_LIMIT, DEFAULT_DAILY_LIMIT);
+}
+
+/** AI calls allowed per organization per UTC day (all members together), from the AI_DAILY_LIMIT_ORG var. */
+export function orgDailyLimit(env: Pick<Bindings, "AI_DAILY_LIMIT_ORG">): number {
+  return positiveInt(env.AI_DAILY_LIMIT_ORG, DEFAULT_ORG_DAILY_LIMIT);
 }
 
 /** AI calls allowed across every user per UTC day, from the AI_GLOBAL_DAILY_LIMIT var. */
@@ -51,6 +57,15 @@ export async function usedToday(db: DrizzleD1Database, userId: string, now: Date
   return row?.used ?? 0;
 }
 
+/** Calls made today by every member of the organization together. */
+export async function orgUsedToday(db: DrizzleD1Database, orgId: string, now: Date = new Date()): Promise<number> {
+  const [row] = await db
+    .select({ used: count() })
+    .from(aiUsage)
+    .where(and(eq(aiUsage.orgId, orgId), countsToday(now)));
+  return row?.used ?? 0;
+}
+
 export async function usedTodayByEveryone(db: DrizzleD1Database, now: Date = new Date()): Promise<number> {
   const [row] = await db.select({ used: count() }).from(aiUsage).where(countsToday(now));
   return row?.used ?? 0;
@@ -59,6 +74,7 @@ export async function usedTodayByEveryone(db: DrizzleD1Database, now: Date = new
 export type Reservation =
   | { ok: true; id: string }
   | { ok: false; reason: "user"; used: number; limit: number }
+  | { ok: false; reason: "organization"; used: number; limit: number }
   | { ok: false; reason: "global"; used: number; limit: number };
 
 /**
@@ -69,7 +85,7 @@ export type Reservation =
  */
 export async function reserveUsage(
   db: DrizzleD1Database,
-  input: { userId: string; siteId: string; action: AiAction; userLimit: number; globalLimit: number },
+  input: { userId: string; siteId: string; orgId: string; action: AiAction; userLimit: number; orgLimit: number; globalLimit: number },
   now: Date = new Date(),
 ): Promise<Reservation> {
   const id = newId("aiu");
@@ -77,16 +93,19 @@ export async function reserveUsage(
   const pendingSince = now.getTime() - PENDING_TTL_MS;
   const counted = sql`created_at >= ${dayStart} AND (status = 'done' OR created_at > ${pendingSince})`;
   const result = await db.run(sql`
-    INSERT INTO ai_usage (id, user_id, site_id, action, provider, model, status, created_at)
-    SELECT ${id}, ${input.userId}, ${input.siteId}, ${input.action}, 'pending', 'pending', 'pending', ${now.getTime()}
+    INSERT INTO ai_usage (id, user_id, site_id, org_id, action, provider, model, status, created_at)
+    SELECT ${id}, ${input.userId}, ${input.siteId}, ${input.orgId}, ${input.action}, 'pending', 'pending', 'pending', ${now.getTime()}
     WHERE (SELECT COUNT(*) FROM ai_usage WHERE user_id = ${input.userId} AND ${counted}) < ${input.userLimit}
+      AND (SELECT COUNT(*) FROM ai_usage WHERE org_id = ${input.orgId} AND ${counted}) < ${input.orgLimit}
       AND (SELECT COUNT(*) FROM ai_usage WHERE ${counted}) < ${input.globalLimit}
   `);
   if (result.meta.changes > 0) return { ok: true, id };
 
   // Nothing was inserted: find out which limit refused the request, for the error message.
-  const [used, everyone] = await Promise.all([usedToday(db, input.userId, now), usedTodayByEveryone(db, now)]);
+  // The organization's quota is the budget; the per-user limit guards against one member spending it all.
+  const [used, org, everyone] = await Promise.all([usedToday(db, input.userId, now), orgUsedToday(db, input.orgId, now), usedTodayByEveryone(db, now)]);
   if (used >= input.userLimit) return { ok: false, reason: "user", used, limit: input.userLimit };
+  if (org >= input.orgLimit) return { ok: false, reason: "organization", used: org, limit: input.orgLimit };
   return { ok: false, reason: "global", used: everyone, limit: input.globalLimit };
 }
 

@@ -5,7 +5,7 @@ import type { AppEnv } from "./types";
 const HSTS_MAX_AGE = "max-age=31536000";
 
 /** Routes that need a signed-in user; their JSON must never be stored by a browser or an intermediary. */
-const AUTHENTICATED_PATH = /^\/(?:sites|ai|admin|orgs)(?:\/|$)/;
+const AUTHENTICATED_PATH = /^\/(?:sites|ai|admin|orgs|invitations|webhooks)(?:\/|$)/;
 
 /** Gives every request an id (the Cloudflare ray id, else a UUID) that error logs carry. */
 export const requestContext = createMiddleware<AppEnv>(async (c, next) => {

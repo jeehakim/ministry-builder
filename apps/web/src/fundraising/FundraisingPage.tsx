@@ -4,10 +4,11 @@ import { AlertCircle, ArrowRight, HeartHandshake, Loader2, Plus } from "lucide-r
 import type { OrgCampaign, OrgCampaignList, SiteSummary } from "../api";
 import { useBackend } from "../backend-context";
 import { ApiUnreachableBanner } from "../components/ApiUnreachableBanner";
-import { AppShell } from "../components/AppShell";
+import { DashboardHeader } from "../components/DashboardHeader";
 import { isNetworkError } from "../lib/errors";
 import { progressText, publishState, STATUS_LABELS } from "../lib/fundraising";
-import { useDashboardOrg } from "../lib/useDashboardOrg";
+import { can } from "../lib/roles";
+import { useOrg } from "../orgs/OrgContext";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -36,14 +37,28 @@ export function FundraisingPage() {
   const [sites, setSites] = useState<Sites>({ kind: "loading" });
   const [campaigns, setCampaigns] = useState<Campaigns>({ kind: "idle" });
   const [attempt, setAttempt] = useState(0);
-  const { orgs, orgId, org, setOrgId } = useDashboardOrg(sites.kind === "ready" ? sites.sites : null);
+  const { state: orgState, current } = useOrg();
+  const orgId = current?.id ?? null;
+  const canEdit = current !== null && can(current.role, "edit");
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    if (orgState.kind === "loading") {
+      setSites({ kind: "loading" });
+      return;
+    }
+    if (orgState.kind === "error") {
+      setSites({ kind: "error", message: orgState.message, network: orgState.network });
+      return;
+    }
+    if (!orgId) {
+      setSites({ kind: "ready", sites: [] });
+      return;
+    }
     setSites({ kind: "loading" });
     backend
-      .listSites()
+      .listSites(orgId)
       .then((list) => !cancelled && setSites({ kind: "ready", sites: list }))
       .catch((err: unknown) => {
         if (!cancelled) setSites({ kind: "error", message: errorText(err, "Could not load your sites."), network: isNetworkError(err) });
@@ -51,7 +66,7 @@ export function FundraisingPage() {
     return () => {
       cancelled = true;
     };
-  }, [backend, attempt]);
+  }, [backend, attempt, orgState, orgId]);
 
   useEffect(() => {
     const fundraising = backend.fundraising;
@@ -69,17 +84,19 @@ export function FundraisingPage() {
     };
   }, [backend, orgId, attempt]);
 
-  const orgSites = sites.kind === "ready" ? sites.sites.filter((s) => s.orgId === orgId) : [];
+  const orgSites = sites.kind === "ready" ? sites.sites : [];
   const siteById = new Map(orgSites.map((s) => [s.id, s]));
 
   return (
-    <AppShell area="fundraising" orgs={orgs} orgId={orgId} onOrgChange={setOrgId}>
+    <div className="min-h-dvh bg-muted/30">
+      <DashboardHeader area="fundraising" showFundraising={Boolean(backend.fundraising)} />
+      <main className="mx-auto max-w-5xl px-4 py-10">
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{org && orgs.length > 1 ? `${org.name}: fundraising` : "Fundraising"}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{current ? `${current.name}: fundraising` : "Fundraising"}</h1>
           <p className="mt-1 text-sm text-muted-foreground">Campaigns with a story, a goal and a progress bar, published on your site. Giving goes through the processor you already use.</p>
         </div>
-        {backend.fundraising && orgSites.length > 0 ? (
+        {backend.fundraising && orgSites.length > 0 && canEdit ? (
           <Button onClick={() => setCreating(true)}>
             <Plus />
             New campaign
@@ -140,12 +157,18 @@ export function FundraisingPage() {
               <HeartHandshake />
             </EmptyMedia>
             <EmptyTitle>No campaigns yet</EmptyTitle>
-            <EmptyDescription>Give it a title and a goal, let AI draft the story, and share one link. You can record gifts as they come in.</EmptyDescription>
+            <EmptyDescription>
+              {canEdit
+                ? "Give it a title and a goal, let AI draft the story, and share one link. You can record gifts as they come in."
+                : "An editor of this organization can start one. You will see its progress here."}
+            </EmptyDescription>
           </EmptyHeader>
-          <Button onClick={() => setCreating(true)}>
-            <Plus />
-            Create your first campaign
-          </Button>
+          {canEdit ? (
+            <Button onClick={() => setCreating(true)}>
+              <Plus />
+              Create your first campaign
+            </Button>
+          ) : null}
         </Empty>
       ) : null}
 
@@ -163,7 +186,8 @@ export function FundraisingPage() {
         onOpenChange={setCreating}
         onCreated={(siteId, campaignId) => void navigate(campaignPath(siteId, campaignId))}
       />
-    </AppShell>
+      </main>
+    </div>
   );
 }
 
@@ -210,7 +234,8 @@ function NewCampaignDialog(props: { open: boolean; sites: SiteSummary[]; onOpenC
   const [siteId, setSiteId] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const chosenSite = sites.find((s) => s.id === siteId) ?? sites[0];
+  const editable = sites.filter((s) => can(s.role, "edit"));
+  const chosenSite = editable.find((s) => s.id === siteId) ?? editable[0];
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -268,7 +293,7 @@ function NewCampaignDialog(props: { open: boolean; sites: SiteSummary[]; onOpenC
               <Label htmlFor="campaign-goal">Goal (USD, optional)</Label>
               <Input id="campaign-goal" inputMode="decimal" value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="5000" />
             </div>
-            {sites.length > 1 ? (
+            {editable.length > 1 ? (
               <div className="space-y-1.5">
                 <Label htmlFor="campaign-site">Site</Label>
                 <Select value={chosenSite?.id} onValueChange={setSiteId}>
@@ -276,7 +301,7 @@ function NewCampaignDialog(props: { open: boolean; sites: SiteSummary[]; onOpenC
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {sites.map((s) => (
+                    {editable.map((s) => (
                       <SelectItem key={s.id} value={s.id}>
                         {s.orgName} ({s.slug})
                       </SelectItem>

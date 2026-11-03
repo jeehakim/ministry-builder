@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import {
   CampaignInput,
   languageName,
+  roleAtLeast,
   siteLanguages,
   type Campaign,
   type CampaignStatus,
@@ -25,6 +26,8 @@ import { UserMenu } from "../components/UserMenu";
 import { AiProvider, CAMPAIGN_STORY_BUSY_KEY, THANK_YOU_BUSY_KEY, useAi } from "../editor/AiContext";
 import { SiteIdProvider } from "../editor/EditorContext";
 import { isNetworkError } from "../lib/errors";
+import { can } from "../lib/roles";
+import { useSyncOrgToPage } from "../orgs/OrgContext";
 import { amountsToText, campaignPublicUrl, centsToText, progressText, publishState, STATUS_HINTS, STATUS_LABELS, textToAmounts, textToGoal } from "../lib/fundraising";
 import { useBeforeUnloadGuard } from "../lib/useBeforeUnloadGuard";
 import { Badge } from "@/components/ui/badge";
@@ -118,7 +121,7 @@ export function CampaignPage() {
           </div>
         ) : (
           <SiteIdProvider value={id}>
-            <AiProvider>
+            <AiProvider orgId={load.site.orgId} readOnly={!can(load.site.role, "ai")}>
               <CampaignEditor key={cid} site={load.site} doc={load.doc} initial={load.campaign} initialGifts={load.gifts} />
             </AiProvider>
           </SiteIdProvider>
@@ -133,6 +136,10 @@ function CampaignEditor({ site, doc, initial, initialGifts }: { site: SiteInfo; 
   const fundraising = backend.fundraising!;
   const navigate = useNavigate();
   const ai = useAi();
+  useSyncOrgToPage(site.orgId);
+  const readOnly = !can(site.role, "edit");
+  // Deleting removes every recorded gift with the campaign, so it takes an admin (the server checks the same).
+  const canDelete = roleAtLeast(site.role, "admin");
   const [saved, setSaved] = useState<Campaign>(initial);
   const [draft, setDraft] = useState<CampaignInput>(() => toInput(initial));
   const [goalText, setGoalText] = useState(() => centsToText(initial.goalAmount));
@@ -206,7 +213,7 @@ function CampaignEditor({ site, doc, initial, initialGifts }: { site: SiteInfo; 
     try {
       await fundraising.remove(site.id, saved.id);
       toast.success(`Deleted ${saved.title}`, { description: "Its page comes down on the next publish." });
-      void navigate(`/fundraising?org=${encodeURIComponent(saved.orgId)}`, { replace: true });
+      void navigate("/fundraising", { replace: true });
     } catch (err) {
       toast.error("Could not delete the campaign", { description: errorText(err) });
       setConfirmDelete(false);
@@ -222,7 +229,7 @@ function CampaignEditor({ site, doc, initial, initialGifts }: { site: SiteInfo; 
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <Button asChild variant="ghost" size="sm" className="-ml-2">
-          <Link to={`/fundraising?org=${encodeURIComponent(saved.orgId)}`}>
+          <Link to="/fundraising">
             <ArrowLeft />
             Fundraising
           </Link>
@@ -230,10 +237,14 @@ function CampaignEditor({ site, doc, initial, initialGifts }: { site: SiteInfo; 
         <h1 className="min-w-0 flex-1 truncate text-xl font-semibold tracking-tight">{saved.title}</h1>
         <Badge variant={saved.status === "active" ? "default" : saved.status === "closed" ? "outline" : "secondary"}>{STATUS_LABELS[saved.status]}</Badge>
         {dirty ? <span className="text-xs text-muted-foreground">Unsaved changes</span> : null}
-        <Button size="sm" disabled={saving || !dirty} onClick={() => void save()}>
-          {saving ? <Loader2 className="animate-spin" /> : <Save />}
-          {saving ? "Saving…" : "Save"}
-        </Button>
+        {readOnly ? (
+          <Badge variant="outline">View only</Badge>
+        ) : (
+          <Button size="sm" disabled={saving || !dirty} onClick={() => void save()}>
+            {saving ? <Loader2 className="animate-spin" /> : <Save />}
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        )}
       </div>
 
       {problem ? (
@@ -245,6 +256,7 @@ function CampaignEditor({ site, doc, initial, initialGifts }: { site: SiteInfo; 
 
       <div className="grid gap-6 lg:grid-cols-[1fr_320px] lg:items-start">
         <div className="space-y-6">
+          <fieldset disabled={readOnly} aria-label="Campaign fields" className="m-0 min-w-0 space-y-6 border-0 p-0">
           <Card>
             <CardHeader className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -393,7 +405,10 @@ function CampaignEditor({ site, doc, initial, initialGifts }: { site: SiteInfo; 
             </CardContent>
           </Card>
 
+          </fieldset>
+
           <GiftsPanel
+            readOnly={readOnly}
             fundraising={fundraising}
             siteId={site.id}
             campaignId={saved.id}
@@ -432,7 +447,7 @@ function CampaignEditor({ site, doc, initial, initialGifts }: { site: SiteInfo; 
             <CardContent className="space-y-3">
               <div className="space-y-1.5">
                 <Label htmlFor="status">Status</Label>
-                <Select value={draft.status} onValueChange={(v) => setDraft((d) => ({ ...d, status: v as CampaignStatus }))}>
+                <Select value={draft.status} disabled={readOnly} onValueChange={(v) => setDraft((d) => ({ ...d, status: v as CampaignStatus }))}>
                   <SelectTrigger id="status" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
@@ -468,6 +483,7 @@ function CampaignEditor({ site, doc, initial, initialGifts }: { site: SiteInfo; 
             </CardContent>
           </Card>
 
+          {canDelete ? (
           <Card className="ring-destructive/30">
             <CardContent className="flex items-center justify-between gap-3">
               <p className="text-xs text-muted-foreground">Deleting removes the campaign and its recorded gifts.</p>
@@ -477,6 +493,7 @@ function CampaignEditor({ site, doc, initial, initialGifts }: { site: SiteInfo; 
               </Button>
             </CardContent>
           </Card>
+          ) : null}
         </aside>
       </div>
 

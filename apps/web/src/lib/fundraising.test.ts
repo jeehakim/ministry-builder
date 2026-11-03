@@ -5,36 +5,11 @@ import {
   campaignPublicUrl,
   centsToText,
   giftCsvTemplate,
-  orgsFromSites,
   progressText,
   publishState,
-  resolveOrg,
   textToAmounts,
   textToGoal,
 } from "./fundraising.ts";
-
-test("orgsFromSites keeps one entry per organization in first-seen order", () => {
-  const orgs = orgsFromSites([
-    { orgId: "b", orgName: "Beta" },
-    { orgId: "a", orgName: "Alpha" },
-    { orgId: "b", orgName: "Beta again" },
-  ]);
-  assert.deepEqual(orgs, [
-    { id: "b", name: "Beta" },
-    { id: "a", name: "Alpha" },
-  ]);
-});
-
-test("resolveOrg prefers the URL, then the remembered one, then the first", () => {
-  const orgs = [
-    { id: "a", name: "A" },
-    { id: "b", name: "B" },
-  ];
-  assert.equal(resolveOrg(orgs, "b", "a"), "b");
-  assert.equal(resolveOrg(orgs, "zz", "b"), "b");
-  assert.equal(resolveOrg(orgs, null, "gone"), "a");
-  assert.equal(resolveOrg([], "a", "b"), null);
-});
 
 test("progress and money text", () => {
   assert.equal(progressText({ raisedAmount: 251_000, goalAmount: 500_000, currency: "USD", percent: 50, giftCount: 3 }), "$2,510 of $5,000 · 50%");

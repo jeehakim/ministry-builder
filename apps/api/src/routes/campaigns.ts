@@ -20,6 +20,7 @@ import {
   type GiftImportResponse,
   type GiftListResponse,
   type GiftResponse,
+  type OrgRole,
   type SiteDocument,
 } from "@ministry/schema";
 import { and, desc, eq } from "drizzle-orm";
@@ -27,7 +28,7 @@ import { drizzle } from "drizzle-orm/d1";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { isSiteAssetKey, loadAuthorizedOrg, loadAuthorizedSite } from "../access";
+import { isSiteAssetKey, requireOrgRole, requireSiteRole } from "../access";
 import { giftTotals, loadCampaigns, parseGiftCsv, toCampaign, toGift, totalsFor } from "../campaigns";
 import { campaigns, donors, gifts, sites, type CampaignRow, type Site } from "../db/schema";
 import { createSender } from "../email";
@@ -64,11 +65,15 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-/** Loads the site (404 for missing or not yours) and one of its campaigns (404 likewise). */
-async function loadSiteCampaign(c: Ctx): Promise<{ site: Site; row: CampaignRow } | Response> {
+/**
+ * Loads the site and one of its campaigns: 404 when either is missing or the caller is not a member,
+ * 403 when their role is below `minimum` (viewer reads, editor edits and records gifts, admin deletes).
+ */
+async function loadSiteCampaign(c: Ctx, minimum: OrgRole): Promise<{ site: Site; row: CampaignRow } | Response> {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id") ?? "");
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id") ?? "", minimum);
+  if (access instanceof Response) return access;
+  const { site } = access;
   const [row] = await db
     .select()
     .from(campaigns)
@@ -125,8 +130,9 @@ export const campaignRoutes = new Hono<AppEnv>();
 
 campaignRoutes.get("/sites/:id/campaigns", async (c) => {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id"), "viewer");
+  if (access instanceof Response) return access;
+  const { site } = access;
   const body: CampaignListResponse = { campaigns: await loadCampaigns(db, site.id) };
   return c.json(body);
 });
@@ -134,8 +140,9 @@ campaignRoutes.get("/sites/:id/campaigns", async (c) => {
 /** Every campaign of an organization, across its sites, for the Fundraising dashboard. */
 campaignRoutes.get("/orgs/:orgId/campaigns", async (c) => {
   const db = drizzle(c.env.DB);
-  const org = await loadAuthorizedOrg(db, c.var.user, c.req.param("orgId"));
-  if (!org) return c.json({ error: "Organization not found" }, 404);
+  const access = await requireOrgRole(c, db, c.req.param("orgId"), "viewer");
+  if (access instanceof Response) return access;
+  const { org } = access;
   const orgSites = await db.select({ id: sites.id, slug: sites.slug, publishedPath: sites.publishedPath }).from(sites).where(eq(sites.orgId, org.id));
   const lists = await Promise.all(orgSites.map((s) => loadCampaigns(db, s.id)));
   const slugs = new Map(orgSites.map((s) => [s.id, s.slug]));
@@ -151,8 +158,9 @@ campaignRoutes.get("/orgs/:orgId/campaigns", async (c) => {
 
 campaignRoutes.post("/sites/:id/campaigns", campaignBody, async (c) => {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id"), "editor");
+  if (access instanceof Response) return access;
+  const { site } = access;
   const input = await parseBody(c, CampaignInput);
   if (input instanceof Response) return input;
   const problem = coverImageProblem(site.id, input) ?? translationProblem(await currentDocument(db, site), input);
@@ -175,14 +183,14 @@ campaignRoutes.post("/sites/:id/campaigns", campaignBody, async (c) => {
 });
 
 campaignRoutes.get("/sites/:id/campaigns/:cid", async (c) => {
-  const loaded = await loadSiteCampaign(c);
+  const loaded = await loadSiteCampaign(c, "viewer");
   if (loaded instanceof Response) return loaded;
   const body: CampaignResponse = { campaign: await withTotals(drizzle(c.env.DB), toCampaign(loaded.row)) };
   return c.json(body);
 });
 
 campaignRoutes.put("/sites/:id/campaigns/:cid", campaignBody, async (c) => {
-  const loaded = await loadSiteCampaign(c);
+  const loaded = await loadSiteCampaign(c, "editor");
   if (loaded instanceof Response) return loaded;
   const db = drizzle(c.env.DB);
   const input = await parseBody(c, CampaignInput);
@@ -203,7 +211,7 @@ campaignRoutes.put("/sites/:id/campaigns/:cid", campaignBody, async (c) => {
 
 /** Deletes a campaign with its gifts. Donor records stay with the organization. The published page goes on the next publish. */
 campaignRoutes.delete("/sites/:id/campaigns/:cid", async (c) => {
-  const loaded = await loadSiteCampaign(c);
+  const loaded = await loadSiteCampaign(c, "admin");
   if (loaded instanceof Response) return loaded;
   const db = drizzle(c.env.DB);
   await db.batch([db.delete(gifts).where(eq(gifts.campaignId, loaded.row.id)), db.delete(campaigns).where(eq(campaigns.id, loaded.row.id))]);
@@ -211,7 +219,7 @@ campaignRoutes.delete("/sites/:id/campaigns/:cid", async (c) => {
 });
 
 campaignRoutes.get("/sites/:id/campaigns/:cid/totals", async (c) => {
-  const loaded = await loadSiteCampaign(c);
+  const loaded = await loadSiteCampaign(c, "viewer");
   if (loaded instanceof Response) return loaded;
   const campaign = toCampaign(loaded.row);
   const totals = await giftTotals(drizzle(c.env.DB), [campaign.id]);
@@ -225,7 +233,7 @@ const DEFAULT_GIFT_LIMIT = 200;
 const MAX_GIFT_LIMIT = 2000;
 
 campaignRoutes.get("/sites/:id/campaigns/:cid/gifts", async (c) => {
-  const loaded = await loadSiteCampaign(c);
+  const loaded = await loadSiteCampaign(c, "viewer");
   if (loaded instanceof Response) return loaded;
   const db = drizzle(c.env.DB);
   const requested = Number.parseInt(c.req.query("limit") ?? "", 10);
@@ -324,7 +332,7 @@ async function sendThankYou(c: Ctx, site: Site, campaign: Campaign, gift: { id: 
 }
 
 campaignRoutes.post("/sites/:id/campaigns/:cid/gifts", campaignBody, async (c) => {
-  const loaded = await loadSiteCampaign(c);
+  const loaded = await loadSiteCampaign(c, "editor");
   if (loaded instanceof Response) return loaded;
   const input = await parseBody(c, GiftInput);
   if (input instanceof Response) return input;
@@ -342,7 +350,7 @@ campaignRoutes.post("/sites/:id/campaigns/:cid/gifts", campaignBody, async (c) =
 });
 
 campaignRoutes.delete("/sites/:id/campaigns/:cid/gifts/:gid", async (c) => {
-  const loaded = await loadSiteCampaign(c);
+  const loaded = await loadSiteCampaign(c, "editor");
   if (loaded instanceof Response) return loaded;
   const db = drizzle(c.env.DB);
   const [gift] = await db
@@ -363,7 +371,7 @@ campaignRoutes.delete("/sites/:id/campaigns/:cid/gifts/:gid", async (c) => {
  * send from a spreadsheet is not something staff should trigger by accident.
  */
 campaignRoutes.post("/sites/:id/campaigns/:cid/gifts/import", importBody, async (c) => {
-  const loaded = await loadSiteCampaign(c);
+  const loaded = await loadSiteCampaign(c, "editor");
   if (loaded instanceof Response) return loaded;
   const contentType = c.req.header("content-type") ?? "";
   let csv: string;
@@ -422,7 +430,7 @@ function knownLanguage(doc: SiteDocument | null, requested: string): string {
 campaignRoutes.post("/sites/:id/campaigns/:cid/ai/story", campaignBody, async (c) => {
   const g = await guard(c);
   if (g instanceof Response) return g;
-  const loaded = await loadSiteCampaign(c);
+  const loaded = await loadSiteCampaign(c, "editor");
   if (loaded instanceof Response) return loaded;
   const body = await parseBody(c, AiCampaignStoryRequest);
   if (body instanceof Response) return body;
@@ -430,7 +438,7 @@ campaignRoutes.post("/sites/:id/campaigns/:cid/ai/story", campaignBody, async (c
   const campaign = toCampaign(loaded.row);
   const language = knownLanguage(await currentDocument(db, loaded.site), body.language);
 
-  const called = await callProvider(c, g.site.id, "campaign_story", () =>
+  const called = await callProvider(c, g.site, "campaign_story", () =>
     g.provider.campaignStory({
       brief: body.brief,
       language,
@@ -453,7 +461,7 @@ campaignRoutes.post("/sites/:id/campaigns/:cid/ai/story", campaignBody, async (c
 campaignRoutes.post("/sites/:id/campaigns/:cid/ai/thank-you", campaignBody, async (c) => {
   const g = await guard(c);
   if (g instanceof Response) return g;
-  const loaded = await loadSiteCampaign(c);
+  const loaded = await loadSiteCampaign(c, "editor");
   if (loaded instanceof Response) return loaded;
   const body = await parseBody(c, AiThankYouRequest);
   if (body instanceof Response) return body;
@@ -461,7 +469,7 @@ campaignRoutes.post("/sites/:id/campaigns/:cid/ai/thank-you", campaignBody, asyn
   const campaign = toCampaign(loaded.row);
   const language = knownLanguage(await currentDocument(db, loaded.site), body.language);
 
-  const called = await callProvider(c, g.site.id, "thank_you", () =>
+  const called = await callProvider(c, g.site, "thank_you", () =>
     g.provider.thankYou({ campaignTitle: campaign.title, story: campaign.story, orgName: g.orgName, language, notes: body.notes }),
   );
   if (called instanceof Response) return called;

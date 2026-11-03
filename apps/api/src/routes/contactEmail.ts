@@ -3,7 +3,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { loadAuthorizedSite } from "../access";
+import { requireSiteRole } from "../access";
 import {
   isContactEmailVerified,
   MAX_VERIFICATION_SENDS_PER_DAY,
@@ -88,8 +88,9 @@ export const contactEmailRoutes = new Hono<AppEnv>();
 
 contactEmailRoutes.get("/sites/:id/contact-email", async (c) => {
   const db = drizzle(c.env.DB);
-  const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-  if (!site) return c.json({ error: "Site not found" }, 404);
+  const access = await requireSiteRole(c, db, c.req.param("id"), "viewer");
+  if (access instanceof Response) return access;
+  const { site } = access;
   const email = normalizeEmail(c.req.query("email") ?? "");
   if (!EMAIL_PATTERN.test(email)) return c.json({ error: "email is required" }, 400);
   const [row] = await db
@@ -105,8 +106,9 @@ contactEmailRoutes.post(
   bodyLimit({ maxSize: 4 * 1024, onError: (c) => c.json({ error: "Body too large" }, 413) }),
   async (c) => {
     const db = drizzle(c.env.DB);
-    const site = await loadAuthorizedSite(db, c.var.user, c.req.param("id"));
-    if (!site) return c.json({ error: "Site not found" }, 404);
+    const access = await requireSiteRole(c, db, c.req.param("id"), "editor");
+    if (access instanceof Response) return access;
+    const { site } = access;
     const parsed = VerifyBody.safeParse(await c.req.json().catch(() => null));
     const email = parsed.success ? normalizeEmail(parsed.data.email) : "";
     if (!EMAIL_PATTERN.test(email)) return c.json({ error: "Enter a valid email address" }, 400);
