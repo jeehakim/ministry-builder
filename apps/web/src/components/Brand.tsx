@@ -1,5 +1,4 @@
 import { Link } from "react-router";
-import { HeartHandshake } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function Brand({ compact = false, className }: { compact?: boolean; className?: string }) {
@@ -7,11 +6,9 @@ export function Brand({ compact = false, className }: { compact?: boolean; class
     <Link
       to="/"
       className={cn("flex items-center gap-2 rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50", className)}
-      aria-label="Ministry Sites home"
+      aria-label="Ministry Sites by Shofar, home"
     >
-      <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-linear-to-br from-brand to-sky-400 text-white shadow-sm">
-        <HeartHandshake className="size-4" aria-hidden="true" />
-      </span>
+      <img src="/shofar-icon.svg" alt="" aria-hidden="true" width={28} height={28} className="size-7 shrink-0 rounded-lg shadow-sm" />
       {compact ? null : (
         <span className="leading-none">
           <span className="block text-sm font-semibold tracking-tight">Ministry Sites</span>
