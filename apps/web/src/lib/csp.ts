@@ -9,11 +9,10 @@ export type CspDirectives = Readonly<Record<string, readonly string[]>>;
 /** The API Worker (apps/api/wrangler.jsonc routes); VITE_API_URL must point at the same origin. */
 const API_ORIGIN = "https://api.build.shofar.ai";
 /**
- * Clerk's frontend API: serves clerk-js and answers the sign-in calls. This is the shofar.ai Clerk
- * application's production host. To confirm it, base64-decode the part of the publishable key after
- * `pk_live_`: it is this hostname followed by `$`.
+ * Clerk's frontend API for the "Shofar Builder" Clerk application, whose production instance has
+ * build.shofar.ai as its primary domain. Serves clerk-js and answers the sign-in calls.
  */
-const CLERK_FAPI = "https://clerk.shofar.ai";
+const CLERK_FAPI = "https://clerk.build.shofar.ai";
 /** Clerk's bot protection (Turnstile) and fraud protection hosts, per Clerk's CSP guide. */
 const CLERK_CHALLENGE = "https://challenges.cloudflare.com";
 const CLERK_PROTECT = "https://*.protect.clerk.com";

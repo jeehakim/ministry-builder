@@ -7,7 +7,7 @@
   X-Frame-Options: DENY
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://clerk.shofar.ai https://challenges.cloudflare.com https://*.protect.clerk.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://api.build.shofar.ai https://clerk.shofar.ai https://*.clerk.accounts.dev https://*.protect.clerk.com:*; frame-src 'self' https://clerk.shofar.ai blob: https://challenges.cloudflare.com https://*.protect.clerk.com; worker-src 'self' blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://clerk.build.shofar.ai https://challenges.cloudflare.com https://*.protect.clerk.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://api.build.shofar.ai https://clerk.build.shofar.ai https://*.clerk.accounts.dev https://*.protect.clerk.com:*; frame-src 'self' https://clerk.build.shofar.ai blob: https://challenges.cloudflare.com https://*.protect.clerk.com; worker-src 'self' blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
 
 # Vite fingerprints everything under /assets/, so these files never change under the same URL.
 /assets/*
